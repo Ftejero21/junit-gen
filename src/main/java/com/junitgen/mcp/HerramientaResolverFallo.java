@@ -26,24 +26,19 @@ public class HerramientaResolverFallo implements Herramienta {
 
     @Override
     public String descripcion() {
-        return "Aplica la decisión del usuario sobre un caso con fallo de aserción, solo tras su respuesta explícita: 'bug' "
-                + "mantiene el test y lo marca como posible bug; 'ajustar' (exige confirmadoPorUsuario=true) autoriza un único "
-                + "reemplazo del caso y devuelve la instrucción de corregir el esperado en el spec y regenerar con "
-                + "reemplazarCasos; 'eliminar' quita el caso (exige confirmadoPorUsuario=true). Nunca la llames por tu cuenta. "
-                + "Por defecto no hace falta (los fallos de aserción se resuelven con registrar_analisis_ia sin preguntar). Úsala "
-                + "solo si el usuario te indica expresamente qué hacer con un caso o con `fallosAsercion: preguntar` (tras "
-                + "«Revisar uno a uno en el chat», la pregunta para el chat o una pregunta que quedó sin responder). Devuelve "
-                + "respuestaFinal solo si no queda nada pendiente; si no, accionRequerida «NO HAS TERMINADO: …» con el siguiente paso.";
+        return "Aplica la decisión del usuario sobre un caso con fallo de aserción, solo tras su respuesta explícita: 'bug' lo "
+                + "mantiene como posible bug; 'ajustar' autoriza reemplazarlo una vez con generar_tests; 'eliminar' lo quita (ambos "
+                + "exigen confirmadoPorUsuario). Por defecto usa registrar_analisis_ia. Sigue accionRequerida.";
     }
 
     @Override
     public ObjectNode esquema() {
         ObjectNode s = Herramienta.esquemaBase();
-        Herramienta.propiedad(s, "carpetaSalida", "string", "Carpeta de salida (por defecto, la elegida en la sesión).", false);
+        Herramienta.propiedad(s, "carpetaSalida", "string", "Carpeta de salida; por defecto, la de la sesión.", false);
         Herramienta.propiedad(s, "caso", "string", "Id del caso.", true);
         Herramienta.propiedad(s, "decision", "string", "bug | ajustar | eliminar", true);
         ((ObjectNode) s.get("properties").get("decision")).putArray("enum").add("bug").add("ajustar").add("eliminar");
-        Herramienta.propiedad(s, "confirmadoPorUsuario", "boolean", "Confirmación explícita del usuario: obligatoria para ajustar y eliminar; solo tras respuesta explícita del usuario.", false);
+        Herramienta.propiedad(s, "confirmadoPorUsuario", "boolean", "Obligatoria para ajustar y eliminar; solo tras respuesta explícita del usuario.", false);
         return s;
     }
 

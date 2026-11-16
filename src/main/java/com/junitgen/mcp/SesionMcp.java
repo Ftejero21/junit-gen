@@ -39,8 +39,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
 /**
@@ -67,12 +70,19 @@ public class SesionMcp {
     private volatile boolean verificacionPreguntada;
     /** La pregunta [Probar tests] [Descartar] quedó sin responder (caducó o no hubo tiempo). */
     private volatile boolean verificacionSinRespuesta;
-    /** Id de la petición tools/call (u otra) en curso en el worker, o null. */
-    private volatile String idLlamada;
-    /** System.nanoTime() del momento en que el lector recibió la petición en curso. */
-    private volatile long inicioLlamadaNanos;
-    /** Futuro de la petición servidor→cliente que el worker está esperando, o null. */
-    private volatile CompletableFuture<JsonNode> esperaEnCurso;
+    /** Petición (tools/call u otra) que procesa el hilo actual: id y momento en que el lector la recibió. */
+    private record Llamada(String id, long inicioNanos) {
+    }
+
+    private final ThreadLocal<Llamada> llamada = new ThreadLocal<>();
+    /** Id de la petición en curso → futuro de la petición servidor→cliente que su hilo está esperando. */
+    private final Map<String, CompletableFuture<JsonNode>> esperas = new ConcurrentHashMap<>();
+    /** Bloque de la llamada en curso del hilo actual (modo paralelo), o null. */
+    private final ThreadLocal<Integer> bloqueLlamada = new ThreadLocal<>();
+    /** Cerrojo de sesión: una llamada a herramienta a la vez (justo: orden de llegada). */
+    private final ReentrantLock cerrojo = new ReentrantLock(true);
+    /** Nombre del cliente MCP (clientInfo.name del initialize), o null. */
+    private volatile String cliente;
     private final Map<String, Set<String>> clasesGeneradas = new ConcurrentHashMap<>();
     private final Map<String, Integer> casosGenerados = new ConcurrentHashMap<>();
     private final Map<String, Set<String>> modulosTrabajo = new ConcurrentHashMap<>();
@@ -88,8 +98,11 @@ public class SesionMcp {
     private Path escritorio;
     /** Rechazos seguidos de la puerta de plan (seleccionar_funciones / detalle_servicio de otro servicio). */
     private final AtomicInteger rechazosPuertaPlan = new AtomicInteger();
-    /** System.nanoTime() del fin de la última llamada a herramienta (medición de la tanda); 0 si aún no hubo ninguna. */
-    private final AtomicLong finLlamadaAnterior = new AtomicLong();
+    /**
+     * System.nanoTime() del fin de la última llamada a herramienta por bloque (medición de la tanda); la clave 0 es la
+     * de las llamadas sin bloque.
+     */
+    private final Map<Integer, Long> finLlamadaAnterior = new ConcurrentHashMap<>();
 
     /** Llamadas válidas seguidas a generar_tests sin casos nuevos tras las que se cierra el servicio en curso. */
     public static final int MAX_SIN_PROGRESO = 2;
@@ -433,31 +446,181 @@ public class SesionMcp {
 
     // ------------------------------------------------------------- llamada en curso
 
-    /** El worker empieza a procesar la petición {@code id}, recibida por el lector en {@code inicioNanos}. */
+    /** El hilo actual empieza a procesar la petición {@code id}, recibida por el lector en {@code inicioNanos}. */
     public void iniciarLlamada(String id, long inicioNanos) {
-        this.inicioLlamadaNanos = inicioNanos;
-        this.esperaEnCurso = null;
-        this.idLlamada = id;
+        llamada.set(new Llamada(id, inicioNanos));
     }
 
+    /** El hilo actual termina su petición: limpia su estado (llamada, espera y bloque). */
     public void terminarLlamada() {
-        this.idLlamada = null;
-        this.esperaEnCurso = null;
+        Llamada l = llamada.get();
+        if (l != null && l.id() != null) {
+            esperas.remove(l.id());
+        }
+        llamada.remove();
+        bloqueLlamada.remove();
     }
 
     /** Tiempo transcurrido desde que se recibió la petición en curso (incluida la cola); ZERO si no hay. */
     public Duration transcurridoLlamada() {
-        if (idLlamada == null) {
+        Llamada l = llamada.get();
+        if (l == null) {
             return Duration.ZERO;
         }
-        long t = System.nanoTime() - inicioLlamadaNanos;
+        long t = System.nanoTime() - l.inicioNanos();
         return t <= 0 ? Duration.ZERO : Duration.ofNanos(t);
+    }
+
+    /** Fija como inicio de la petición en curso el instante actual (el tiempo en la cola del cerrojo no cuenta). */
+    void reiniciarInicioLlamada() {
+        Llamada l = llamada.get();
+        if (l != null) {
+            llamada.set(new Llamada(l.id(), System.nanoTime()));
+        }
     }
 
     /** true si el cliente canceló (notifications/cancelled) la petición en curso. */
     public boolean llamadaCancelada() {
-        String id = idLlamada;
-        return id != null && cancelados.contains(id);
+        Llamada l = llamada.get();
+        return l != null && l.id() != null && cancelados.contains(l.id());
+    }
+
+    // ------------------------------------------------------------- cerrojo de sesión y bloque de la llamada
+
+    /**
+     * Cerrojo de sesión (justo): {@link RegistroHerramientas#llamar} lo toma durante toda la llamada. Orden de bloqueos
+     * obligatorio: cerrojo de sesión → monitor de {@link VerificacionesSesion} → {@code BloqueosSalida} (ejecución →
+     * escritura). Nunca se readquiere con el monitor tomado.
+     */
+    public ReentrantLock cerrojo() {
+        return cerrojo;
+    }
+
+    /**
+     * Ejecuta {@code accion} sin el cerrojo de sesión (lo suelta tantas veces como lo tenga el hilo y lo recupera al
+     * terminar, también si falla). Si el hilo no lo tiene, solo ejecuta la acción.
+     */
+    public <T> T sinCerrojo(Supplier<T> accion) {
+        int veces = cerrojo.isHeldByCurrentThread() ? cerrojo.getHoldCount() : 0;
+        for (int i = 0; i < veces; i++) {
+            cerrojo.unlock();
+        }
+        try {
+            return accion.get();
+        } finally {
+            for (int i = 0; i < veces; i++) {
+                cerrojo.lock();
+            }
+        }
+    }
+
+    /** true solo la primera vez: el pre-escaneo se lanza una vez por sesión. */
+    boolean reclamarPreEscaneo() {
+        return preEscaneoLanzado.compareAndSet(false, true);
+    }
+
+    /** Fija (o, con null, olvida) el bloque de la llamada en curso del hilo actual. */
+    public void fijarBloqueLlamada(Integer bloque) {
+        if (bloque == null) {
+            bloqueLlamada.remove();
+        } else {
+            bloqueLlamada.set(bloque);
+        }
+    }
+
+    /** Bloque de la llamada en curso del hilo actual, o null (llamada sin ámbito de bloque). */
+    public Integer bloqueLlamada() {
+        return bloqueLlamada.get();
+    }
+
+    // ------------------------------------------------------------- tipos ya enviados a un bloque (solo en memoria)
+
+    /** Clave 0 de {@link #avisosRepetidos}: las llamadas sin bloque. */
+    private static final int SIN_BLOQUE = 0;
+
+    /** Tipos auxiliares (FQN) ya enviados a un bloque y la «foto» estable del servicio en curso (no va a tanda.json). */
+    private static final class TiposBloque {
+        final Set<String> enviados = new LinkedHashSet<>();
+        String servicio;
+        Set<String> previosDelServicio = Set.of();
+    }
+
+    private final Map<String, TiposBloque> tiposPorBloque = new HashMap<>();
+    private final AtomicBoolean preEscaneoLanzado = new AtomicBoolean();
+    /** Último aviso completo de solo lectura enviado por bloque (clave 0 = sin bloque). */
+    private final Map<Integer, String> avisosRepetidos = new ConcurrentHashMap<>();
+
+    private static String claveBloque(Path proyecto, int bloque) {
+        return clave(proyecto) + "#" + bloque;
+    }
+
+    /** FQN de los tipos auxiliares ya enviados al bloque (copia). */
+    public synchronized Set<String> tiposEnviados(Path proyecto, int bloque) {
+        TiposBloque t = tiposPorBloque.get(claveBloque(proyecto, bloque));
+        return t == null ? new LinkedHashSet<>() : new LinkedHashSet<>(t.enviados);
+    }
+
+    /**
+     * Tipos que el bloque ya tenía antes del primer paquete de {@code servicio}: se mantienen mientras se pagina el mismo
+     * servicio (el cursor de la página 2 depende de una lista estable) y se renuevan al empezar otro servicio.
+     */
+    public synchronized Set<String> tiposPreviosDelServicio(Path proyecto, int bloque, String servicio) {
+        TiposBloque t = tiposPorBloque.computeIfAbsent(claveBloque(proyecto, bloque), k -> new TiposBloque());
+        if (!java.util.Objects.equals(t.servicio, servicio)) {
+            t.servicio = servicio;
+            t.previosDelServicio = new LinkedHashSet<>(t.enviados);
+        }
+        return new LinkedHashSet<>(t.previosDelServicio);
+    }
+
+    public synchronized void registrarTiposEnviados(Path proyecto, int bloque, Collection<String> fqns) {
+        if (fqns == null || fqns.isEmpty()) {
+            return;
+        }
+        tiposPorBloque.computeIfAbsent(claveBloque(proyecto, bloque), k -> new TiposBloque()).enviados.addAll(fqns);
+    }
+
+    /** Olvida lo enviado al bloque: el siguiente paquete vuelve a incluir todos los tipos. */
+    public synchronized void olvidarTiposEnviados(Path proyecto, int bloque) {
+        tiposPorBloque.remove(claveBloque(proyecto, bloque));
+    }
+
+    /**
+     * true si {@code aviso} es igual al último aviso completo enviado en este ámbito (bloque; null = sin bloque); si no,
+     * lo guarda y devuelve false.
+     */
+    public boolean avisoRepetido(Integer bloque, String aviso) {
+        if (aviso == null) {
+            return false;
+        }
+        String anterior = avisosRepetidos.put(bloque == null ? SIN_BLOQUE : bloque, aviso);
+        return aviso.equals(anterior);
+    }
+
+    /** Nombre del cliente MCP (clientInfo.name), o null. */
+    public String cliente() {
+        return cliente;
+    }
+
+    public void fijarCliente(String nombre) {
+        this.cliente = nombre;
+    }
+
+    /**
+     * Servicios (FQN) del bloque de la llamada en curso del hilo actual, o null si la llamada no tiene ámbito de bloque
+     * (o el bloque ya no existe en la tanda del proyecto). Nunca se llama con el monitor del plan tomado.
+     */
+    Set<String> ambito(Path proyecto) {
+        Integer b = bloqueLlamada.get();
+        if (b == null || proyecto == null) {
+            return null;
+        }
+        return BloquesTanda.serviciosDe(tanda(proyecto), b);
+    }
+
+    /** Ámbito de la llamada en curso del hilo actual para el último proyecto escaneado, o null. */
+    Set<String> ambitoLlamada() {
+        return bloqueLlamada.get() == null ? null : ambito(fachada.ultimaRuta());
     }
 
     /**
@@ -670,7 +833,7 @@ public class SesionMcp {
                 entero(rs, "pasan"), entero(rs, "fallosAsercion"), entero(rs, "erroresMontaje"), entero(rs, "noCompilan"),
                 entero(rs, "descartadosPorDuplicado"));
         List<String> sesion = serviciosDeSesion(salidaReal);
-        ProgresoPlan p = progresoPlan(proyecto);
+        ProgresoPlan p = progresoPlanGlobal(proyecto);
         List<String> completados = null;
         List<RespuestaFinal.Pendiente> pendientes = null;
         List<RespuestaFinal.Pendiente> incompletos = new ArrayList<>();
@@ -690,7 +853,7 @@ public class SesionMcp {
             }
         }
         RespuestaFinal.Arreglos arreglos = null;
-        List<Tanda.ArregloTanda> registros = arreglos(proyecto);
+        List<Tanda.ArregloTanda> registros = arreglosGlobal(proyecto);
         if (!registros.isEmpty()) {
             int arreglados = 0;
             int bugs = 0;
@@ -771,7 +934,7 @@ public class SesionMcp {
         r.put("sinEjecutar", generados - ejecutados);
         r.put("descartadosPorDuplicado", duplicados);
         r.put("eliminados", eliminados);
-        ProgresoPlan p = progresoPlan(proyecto);
+        ProgresoPlan p = progresoPlanGlobal(proyecto);
         if (p != null) {
             Map<String, Object> plan = new LinkedHashMap<>();
             plan.put("serviciosTotal", p.servicios());
@@ -1135,10 +1298,20 @@ public class SesionMcp {
      * métodos tienen acreditados ≥ previstos.
      */
     public ProgresoPlan progresoPlan(Path proyecto) {
+        return progresoPlan(proyecto, true);
+    }
+
+    /** Como {@link #progresoPlan(Path)} pero siempre con todos los servicios del plan, aunque la llamada tenga bloque. */
+    public ProgresoPlan progresoPlanGlobal(Path proyecto) {
+        return progresoPlan(proyecto, false);
+    }
+
+    private ProgresoPlan progresoPlan(Path proyecto, boolean conAmbito) {
         Plan p = plan(proyecto);
         if (p == null) {
             return null;
         }
+        Set<String> ambito = conAmbito ? ambito(proyecto) : null;
         synchronized (p) {
             int total = 0;
             int generados = 0;
@@ -1148,6 +1321,9 @@ public class SesionMcp {
             Map<String, int[]> porServicio = new LinkedHashMap<>();
             List<String> pendientes = new ArrayList<>();
             for (MetodoSeguido ms : p.metodos.values()) {
+                if (ambito != null && !ambito.contains(ms.fqn)) {
+                    continue;
+                }
                 int acreditados = ms.acreditados();
                 total += ms.previstos;
                 generados += acreditados;
@@ -1178,14 +1354,26 @@ public class SesionMcp {
 
     /** Estado de cada método del plan activo (en el orden del plan), o vacío si no hay plan. */
     public List<EstadoMetodo> estadoPlan(Path proyecto) {
+        return estadoPlan(proyecto, true);
+    }
+
+    /** Como {@link #estadoPlan(Path)} pero con todos los servicios del plan, aunque la llamada tenga bloque. */
+    public List<EstadoMetodo> estadoPlanGlobal(Path proyecto) {
+        return estadoPlan(proyecto, false);
+    }
+
+    private List<EstadoMetodo> estadoPlan(Path proyecto, boolean conAmbito) {
         Plan p = plan(proyecto);
         if (p == null) {
             return List.of();
         }
+        Set<String> ambito = conAmbito ? ambito(proyecto) : null;
         synchronized (p) {
             List<EstadoMetodo> r = new ArrayList<>();
             for (MetodoSeguido ms : p.metodos.values()) {
-                r.add(new EstadoMetodo(ms.fqn, ms.metodo, ms.previstos, ms.acreditados()));
+                if (ambito == null || ambito.contains(ms.fqn)) {
+                    r.add(new EstadoMetodo(ms.fqn, ms.metodo, ms.previstos, ms.acreditados()));
+                }
             }
             return r;
         }
@@ -1426,15 +1614,25 @@ public class SesionMcp {
 
     /** Copias de los casos apuntados para arreglar al final, en orden; sin tanda → vacía. */
     public List<Tanda.ArregloTanda> arreglos(Path proyecto) {
+        return arreglos(proyecto, true);
+    }
+
+    /** Como {@link #arreglos(Path)} pero con los casos de todos los servicios, aunque la llamada tenga bloque. */
+    public List<Tanda.ArregloTanda> arreglosGlobal(Path proyecto) {
+        return arreglos(proyecto, false);
+    }
+
+    private List<Tanda.ArregloTanda> arreglos(Path proyecto, boolean conAmbito) {
         Tanda t = tanda(proyecto);
         if (t == null) {
             return List.of();
         }
+        Set<String> ambito = conAmbito ? ambito(proyecto) : null;
         List<Tanda.ArregloTanda> r = new ArrayList<>();
         synchronized (t) {
             if (t.arreglos != null) {
                 for (Tanda.ArregloTanda a : t.arreglos) {
-                    if (a != null) {
+                    if (a != null && (ambito == null || ambito.contains(a.servicio))) {
                         r.add(a.copia());
                     }
                 }
@@ -1601,9 +1799,14 @@ public class SesionMcp {
         }
     }
 
-    /** Anota el fin de la llamada en curso ({@code ahoraNanos}) y devuelve el de la anterior (0 si no había). */
+    /**
+     * Anota el fin de la llamada en curso ({@code ahoraNanos}) y devuelve el de la anterior del mismo bloque (0 si no
+     * había): cada bloque tiene su propia línea de tiempo, para medir bien con trabajadores en paralelo.
+     */
     long marcarFinLlamada(long ahoraNanos) {
-        return finLlamadaAnterior.getAndSet(ahoraNanos);
+        Integer b = bloqueLlamada.get();
+        Long previo = finLlamadaAnterior.put(b == null ? 0 : b, ahoraNanos);
+        return previo == null ? 0 : previo;
     }
 
     /** Deshace {@link #reservarInformeArreglos(Path)} cuando la escritura falla. */
@@ -1799,8 +2002,11 @@ public class SesionMcp {
         CompletableFuture<JsonNode> f = s.futuro();
         long ms = espera == null ? 0 : Math.max(0, espera.toMillis());
         FinEspera fin;
+        Llamada actual = llamada.get();
         try {
-            esperaEnCurso = f;
+            if (actual != null && actual.id() != null) {
+                esperas.put(actual.id(), f);
+            }
             if (llamadaCancelada()) {
                 f.cancel(false);
             }
@@ -1829,7 +2035,9 @@ public class SesionMcp {
             System.err.println("Petición " + metodo + " " + s.id() + " fallida: " + e.getMessage());
             return new RespuestaCliente(FinEspera.FALLIDA, null);
         } finally {
-            esperaEnCurso = null;
+            if (actual != null && actual.id() != null) {
+                esperas.remove(actual.id());
+            }
         }
         pendientes.remove(s.id());
         System.err.println("Petición " + metodo + " " + s.id() + (fin == FinEspera.CADUCADA
@@ -1860,8 +2068,8 @@ public class SesionMcp {
 
     public void cancelar(String id) {
         cancelados.add(id);
-        CompletableFuture<JsonNode> espera = esperaEnCurso;
-        if (id != null && id.equals(idLlamada) && espera != null) {
+        CompletableFuture<JsonNode> espera = id == null ? null : esperas.get(id);
+        if (espera != null) {
             espera.cancel(false);
         }
     }

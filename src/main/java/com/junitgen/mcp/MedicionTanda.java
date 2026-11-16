@@ -6,6 +6,7 @@ import com.junitgen.util.Textos;
 
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -51,6 +52,10 @@ final class MedicionTanda {
     static Cubo cubo(SesionMcp sesion) {
         Path proyecto = sesion.fachada().ultimaRuta();
         if (proyecto == null) {
+            return new Cubo(TANDA, false);
+        }
+        if (sesion.bloqueLlamada() == null && BloquesTanda.activo(sesion, proyecto)) {
+            // Con la tanda en bloques, lo que no es de ningún bloque (escaneo, cierre) va a la tanda.
             return new Cubo(TANDA, false);
         }
         String s = HerramientaGenerar.siguienteServicio(sesion, proyecto);
@@ -151,8 +156,69 @@ final class MedicionTanda {
                     .append(String.format(Locale.ROOT, "%.1f", (double) llamadasServicios / servicios)).append(" llamadas, ")
                     .append(String.format(Locale.ROOT, "%.1f", (double) msServicios / servicios / MS_SEGUNDO)).append(" s\n");
         }
+        sb.append(cuerpoBloques(t, ms));
         sb.append(cuerpoArreglo(t, ms, total.ms));
         return sb.toString();
+    }
+
+    /**
+     * Con la tanda en bloques: tiempo real (de la primera a la última llamada; con trabajadores en paralelo la fila Total suma
+     * el trabajo de todos los bloques) y tabla Bloque | Servicios | Tiempo | Llamadas; vacío sin bloques.
+     */
+    private static String cuerpoBloques(Tanda t, Map<String, Tanda.Medicion> ms) {
+        if (t.bloques == null || t.bloques.isEmpty()) {
+            return "";
+        }
+        Instant primera = null;
+        Instant ultima = null;
+        for (Tanda.Medicion m : ms.values()) {
+            if (m == null) {
+                continue;
+            }
+            Instant i = instante(m.inicio);
+            Instant f = instante(m.fin);
+            if (i != null && (primera == null || i.isBefore(primera))) {
+                primera = i;
+            }
+            if (f != null && (ultima == null || f.isAfter(ultima))) {
+                ultima = f;
+            }
+        }
+        String real = primera == null || ultima == null ? "sin datos" : tiempo(Math.max(0, ultima.toEpochMilli() - primera.toEpochMilli()));
+        StringBuilder sb = new StringBuilder("\nTanda en paralelo: ").append(t.bloques.size()).append(" bloques; tiempo real: ")
+                .append(real).append(" (de la primera a la última llamada); la fila Total suma el trabajo de todos los bloques\n\n");
+        sb.append("| Bloque | Servicios | Tiempo | Llamadas |\n|---|---|---|---|\n");
+        for (Tanda.BloqueTanda b : t.bloques) {
+            if (b == null) {
+                continue;
+            }
+            long tiempo = 0;
+            int llamadas = 0;
+            List<String> nombres = new ArrayList<>();
+            for (String fqn : b.servicios) {
+                nombres.add(Textos.nombreSimple(fqn));
+                Tanda.Medicion m = ms.get(fqn);
+                if (m != null) {
+                    tiempo += m.ms;
+                    llamadas += m.llamadas;
+                }
+            }
+            sb.append("| ").append(b.id).append(" | ").append(EscritorInforme.celda(String.join(", ", nombres))).append(" | ")
+                    .append(tiempo(tiempo)).append(" | ").append(llamadas).append(" |\n");
+        }
+        return sb.toString();
+    }
+
+    private static Instant instante(String iso) {
+        if (iso == null) {
+            return null;
+        }
+        try {
+            return Instant.parse(iso);
+        } catch (java.time.format.DateTimeParseException e) {
+            System.err.println("junit-gen: instante de medición no válido: " + e.getClass().getSimpleName());
+            return null;
+        }
     }
 
     /**

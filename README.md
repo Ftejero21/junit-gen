@@ -62,8 +62,8 @@ Pedirle tests a una IA "a pelo" suele acabar igual: tests que no compilan, mocks
 
 junit-gen es una **aplicación Java** que analiza tu proyecto y **genera ella misma el código de los tests**, en milisegundos. La IA solo le dice *qué* probar con unas pocas líneas de JSON; todo el código lo escribe, compila y ejecuta junit-gen.
 
-- 🚀 **Muchísimo más rápido** que si la IA escribiera cada test: la IA genera un spec corto en vez de archivos enteros.
-- 💸 **Gasta mucha menos IA** (menos tokens, menos peticiones): ideal si tu plan es limitado.
+- 🚀 **Hasta 2,7× más rápido** que si la IA escribiera cada test: la IA genera un spec corto en vez de archivos enteros, y en Claude Code los servicios se reparten entre subagentes que trabajan **en paralelo**.
+- 💸 **Gasta mucha menos IA**: entre un 60 % y un 73 % menos de tokens y hasta un 81 % menos de coste en las pruebas medidas.
 - 🎯 **Resultado uniforme y fiable**: mismo estilo en todos los tests, imports y firmas reales sacados de tu código, sin inventos.
 - ♻️ **Regenerar no cuesta IA**: a partir del `spec.json` junit-gen vuelve a escribir los tests al instante.
 
@@ -79,6 +79,18 @@ junit-gen es una **aplicación Java** que analiza tu proyecto y **genera ella mi
 | — | Te deja un informe en lenguaje llano |
 
 > La IA **nunca escribe código Java**. Solo rellena un spec JSON. Por eso los tests salen uniformes, compilan y se pueden regenerar sin volver a gastar IA.
+
+### 📊 Medido, no prometido
+
+Mismo proyecto real (Spring Boot, 2 módulos), mismos servicios y mismo modelo (Claude Haiku 5.5, esfuerzo alto, Claude Code CLI). «Solo IA» = pedirle a la IA que escriba, compile y arregle los tests por su cuenta.
+
+| Servicios | Solo IA | Con junit-gen | Diferencia |
+|---|---|---|---|
+| 5 | 6 min 48 s · 4,5 M tokens · 35/35 pasan | 5 min 02 s · 1,8 M tokens · 27/27 pasan | 1,4× más rápido · −60 % tokens |
+| 15 | 14 min 17 s · 11,4 M tokens · 1,10 $ · 94/95 | **5 min 21 s · 3,1 M tokens · 0,20 $ · 71/71** | **2,7× más rápido · −73 % tokens · −81 % coste** |
+| 25 | 12 min 45 s · 11,9 M tokens · 1,04 $ · 115/116 | **6 min 06 s · 4,2 M tokens · 0,26 $ · 128/129** | **2,1× más rápido · −64 % tokens · −75 % coste** |
+
+Además, en esas pruebas la IA sola **modificó o sobrescribió tests que ya existían** en el proyecto; junit-gen no tocó ni un archivo. Los resultados varían entre ejecuciones (sobre todo con pocos servicios) y dependen del modelo y del proyecto.
 
 ---
 
@@ -252,6 +264,8 @@ fallosAsercion: revisarIa    # revisarIa | preguntar
 arreglos: alFinal            # alFinal | inmediato
 verificacion: siempre        # siempre | preguntar | nunca
 ```
+
+**Velocidad.** El spec que escribe la IA es compacto: omite `version`, `proyecto`, `estilo`, `id`, `claseTest`, `imports`, `parametros` y las listas vacías (junit-gen los completa y deduce el `id` de `metodo` + `escenario`), con `queHaceOriginal` una vez por función y `queComprueba` en cada caso. El escaneo en memoria solo se reutiliza si la huella de las fuentes y de los archivos de build no cambió. Variables de entorno opcionales: `JUNITGEN_PREESCANEO=1` (pre-escaneo en segundo plano al arrancar el servidor MCP; algo de CPU al arrancar) y `JUNITGEN_CARGA_DIRECTA=1` (marca las herramientas principales para clientes con carga diferida).
 
 ---
 

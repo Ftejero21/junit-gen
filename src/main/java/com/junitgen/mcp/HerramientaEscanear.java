@@ -76,84 +76,42 @@ public class HerramientaEscanear implements Herramienta {
 
     @Override
     public String descripcion() {
-        return "Escanea en solo lectura un proyecto Java (uno o varios módulos Maven/Gradle) y devuelve un RESUMEN breve: servicios "
-                + "pedidos, plan de generación (una fila por servicio), versiones, estilo sugerido y «Siguiente paso»; síguelo sin "
-                + "pedir confirmación. Si el usuario escribió una FRASE (no un formato corto), pásala tal cual en 'peticion' y "
-                + "nada más (salvo 'ruta'): junit-gen deduce 'numServicios', 'servicios', 'todas', 'funciones' o 'continuar', y si "
-                + "no puede deducir nada devuelve accionRequerida con la pregunta exacta. Las secciones largas (plan con métodos y progreso, servicios, estilo con extractos, avisos, "
-                + "refactor, dudosos, descartes) se piden aparte con 'seccion' + 'pagina', solo si el usuario las quiere; con "
-                + "'seccion' no se recalcula ni se reinicia el plan. Pasa en 'ruta' la raíz del workspace que ya conoces, sin "
-                + "preguntar al usuario (nunca un módulo o subcarpeta); si se omite: carpeta abierta en el IDE (MCP roots), último "
-                + "escaneo o directorio de trabajo del servidor. Si el usuario nombró servicios, pásalos en 'servicios': junit-gen "
-                + "los busca en todos los módulos (exacto, sin mayúsculas, interfaz → sus implementaciones, sufijo Impl), deduce el "
-                + "módulo de trabajo (no lo preguntes); sin ambigüedad no pidas confirmación. Un número N del usuario es SIEMPRE "
-                + "'numServicios' (N = número de servicios, nunca de tests): junit-gen toma los N primeros servicios por orden "
-                + "alfabético de nombre de clase (`orden: prioridad` en junit-gen.yml para priorizar; con 'servicios', los N "
-                + "primeros de ellos) y devuelve el plan (provisional hasta elegir funciones) con las "
-                + "funciones que eliges tú por importancia de negocio con `seleccionar_funciones`, dentro del cupo de junit-gen "
-                + "(60 % de las no triviales por defecto; con `todas`, el 100 %; con `funciones=…`, las que nombre el usuario)"
-                + " (en las que ya tienen tests, solo escenarios nuevos), que se genera sin pedir confirmación; con solo 'servicios' "
-                + "también hay plan. Antes de detalle_servicio, por cada servicio con «Selección» `pendiente`, llama a "
-                + "seleccionar_funciones (paso obligatorio). 'todas'=true SOLO si el usuario escribió `todas`: 100 % de las "
-                + "funciones, incluidas triviales (`todas` nunca es un nombre de servicio). 'funciones' SOLO si el usuario nombró "
-                + "funciones concretas de UN servicio (`funciones=a,b`): se prueban exactamente esas y no llames a "
-                + "seleccionar_funciones. Cada función tiene un máximo de casos "
-                + "(maxCasos en detalle_servicio) y cada caso nuevo lleva queHaceOriginal y queComprueba. Sin "
-                + "'carpetaSalida', junit-gen usa la ruta por defecto guardada (con una nota) o pregunta una vez «¿Dónde exportamos "
-                + "los tests?» en una pantalla [Escritorio] [Ruta por defecto] [" + Elicitacion.OTRA_RUTA + "] (solo con «"
-                + Elicitacion.OTRA_RUTA + "» pide la ruta en una segunda pantalla) y la recuerda; para cambiarla, cambiar_ruta_salida. "
-                + "El progreso de la tanda se guarda en tanda.json de la carpeta de salida: si el usuario escribe `continuar` "
-                + "o si TÚ has perdido el hilo de la tanda en curso (contexto resumido o compactado; también en un chat nuevo "
-                + "con el contexto agotado), llama SOLO con 'continuar'=true (y 'ruta'/'carpetaSalida' si "
-                + "las conoces): restaura plan, casos y estados, vuelve a probar lo no verificado y devuelve el siguiente paso.";
+        return "Escanea en solo lectura el proyecto Java (Maven/Gradle, varios módulos) y devuelve resumen, plan de generación y "
+                + "«Siguiente paso»: síguelo sin pedir confirmación. Llámala la primera. Pasa la frase del usuario tal cual en "
+                + "'peticion' (junit-gen deduce numServicios, servicios, todas, funciones o continuar) y en 'ruta' la raíz del "
+                + "workspace que ya conoces, nunca un módulo. Un número N del usuario es siempre numServicios. Sin 'carpetaSalida' "
+                + "usa la ruta por defecto o la pregunta una vez. 'continuar'=true si el usuario escribe `continuar` o perdiste el "
+                + "hilo de la tanda. 'paralelo'=true solo en Claude Code con subagentes (Agent), nunca en Copilot: reparte el plan "
+                + "en bloques y devuelve el promptTrabajador. Cada caso nuevo: queHaceOriginal una vez por función y queComprueba "
+                + "en cada caso. Sigue accionRequerida. Secciones largas: 'seccion'+'pagina', solo si las piden.";
     }
 
     @Override
     public ObjectNode esquema() {
         ObjectNode s = Herramienta.esquemaBase();
-        Herramienta.propiedad(s, "ruta", "string", "Raíz del proyecto/workspace (con uno o varios módulos), nunca un módulo; si se "
-                + "omite, la carpeta abierta en el IDE o el directorio de trabajo del servidor.", false);
-        Herramienta.propiedad(s, PETICION, "string", "Texto que el usuario escribió tras /generartest, TAL CUAL (frase libre en "
-                + "español o formato corto), p. ej. «generame los tests para 10 servicios», «prueba todas las funciones de "
-                + "usuarioService», «tests de pedidoService solo de crear y cancelar», «continúa la tanda». "
-                + "junit-gen lo interpreta él solo (número en cifra o en letra → numServicios; nombres de servicios del proyecto; "
-                + "todas; funciones reales del servicio; continuar): no lo traduzcas, resumas ni interpretes, y no pases a la vez "
-                + "numServicios, servicios, funciones, todas ni continuar (si llegan, mandan ellos campo a campo).", false);
-        Herramienta.propiedad(s, "servicios", "array", "Servicios nombrados por el usuario (nombre simple o FQN, sin distinguir "
-                + "mayúsculas; una interfaz se sustituye por sus implementaciones): se buscan en todos los módulos, se deduce el "
-                + "módulo de trabajo y el informe se limita a ellos.", false);
-        Herramienta.propiedad(s, "numServicios", "integer", "N = número de servicios (" + PlanGeneracion.MIN_SERVICIOS + ".."
-                + PlanGeneracion.MAX_SERVICIOS + "); de cada uno se generan tests de sus funciones elegidas con seleccionar_funciones "
-                + "(con 'todas', de todas). Devuelve el plan "
-                + "de generación determinista con los N primeros por orden alfabético de nombre de clase (`orden: prioridad` en "
-                + "junit-gen.yml para priorizar; con 'servicios', los N primeros de ellos). Nunca es un número de tests.", false);
+        Herramienta.propiedad(s, "ruta", "string", "Raíz del workspace (nunca un módulo); por defecto, la carpeta abierta en el IDE.", false);
+        Herramienta.propiedad(s, PETICION, "string", "Frase del usuario tras /generartest, tal cual: junit-gen la interpreta.", false);
+        Herramienta.propiedad(s, "servicios", "array", "Servicios nombrados por el usuario (nombre simple o FQN).", false);
+        Herramienta.propiedad(s, "numServicios", "integer", "N = nº de servicios (" + PlanGeneracion.MIN_SERVICIOS + ".."
+                + PlanGeneracion.MAX_SERVICIOS + "), nunca de tests.", false);
         ObjectNode num = (ObjectNode) s.get("properties").get("numServicios");
         num.put("minimum", PlanGeneracion.MIN_SERVICIOS);
         num.put("maximum", PlanGeneracion.MAX_SERVICIOS);
-        Herramienta.propiedad(s, "todas", "boolean", "Solo si el usuario escribió `todas`: 100 % de las funciones, incluidas "
-                + "triviales.", false);
-        Herramienta.propiedad(s, "funciones", "array", "SOLO si el usuario nombró funciones concretas (nombre o nombre(Tipos)); "
-                + "exige exactamente un servicio resuelto en `servicios`; la IA no elige: se prueban esas y no se llama a "
-                + "seleccionar_funciones.", false);
-        Herramienta.propiedad(s, "carpetaSalida", "string", "Carpeta de salida (se valida ya y aporta los casos ya generados); si se "
-                + "omite, la elegida en la sesión, la ruta por defecto guardada o se pregunta una vez.", false);
-        Herramienta.propiedad(s, "guardarRutaPorDefecto", "boolean", "Con carpetaSalida elegida en el chat: el usuario pidió "
-                + "establecerla como ruta por defecto del proyecto.", false);
-        Herramienta.propiedad(s, "seccion", "string", "Sección larga bajo petición (paginada con 'pagina'): plan (progreso por "
-                + "servicio y método), servicios, estilo, avisos, refactor, dudosos, descartes. No recalcula ni reinicia el plan.", false);
+        Herramienta.propiedad(s, "todas", "boolean", "Solo si el usuario escribió `todas`: el 100 % de las funciones.", false);
+        Herramienta.propiedad(s, "funciones", "array", "Solo si el usuario nombró funciones de UN servicio; sin seleccionar_funciones.", false);
+        Herramienta.propiedad(s, "carpetaSalida", "string", "Carpeta de salida; por defecto, la de la sesión o la guardada.", false);
+        Herramienta.propiedad(s, "guardarRutaPorDefecto", "boolean", "El usuario pidió guardar carpetaSalida como ruta por defecto.", false);
+        Herramienta.propiedad(s, "seccion", "string", "Sección larga bajo petición (con 'pagina'); no recalcula el plan.", false);
         ArrayNode en = ((ObjectNode) s.get("properties").get("seccion")).putArray("enum");
         InformeEscaneo.SECCIONES.forEach(en::add);
         Herramienta.propiedad(s, "modulo", "string", "Limitar el informe a un módulo.", false);
         Herramienta.propiedad(s, "filtro", "string", "Texto que debe contener el FQN del servicio.", false);
         Herramienta.propiedad(s, "soloSinCubrir", "boolean", "Solo servicios con métodos sin tests.", false);
-        Herramienta.propiedad(s, "pagina", "integer", "Página de la sección pedida en 'seccion' (desde 1).", false);
-        Herramienta.propiedad(s, "tamPagina", "integer", "Máximo de filas por página en seccion=servicios (por defecto 40, máximo 100; "
-                + "manda el presupuesto de tamaño).", false);
-        Herramienta.propiedad(s, "refrescar", "boolean", "Ignorar la caché de la sesión y volver a escanear.", false);
-        Herramienta.propiedad(s, "continuar", "boolean", "Solo si el usuario escribió `continuar` o si TÚ has perdido el hilo de "
-                + "la tanda en curso (contexto resumido o compactado): devuelve exactamente dónde seguir; retoma la tanda guardada en la "
-                + "carpeta de salida (tanda.json) por el siguiente servicio, sin repetir lo ya generado (también en un chat o "
-                + "proceso nuevo). No se combina con numServicios, servicios, funciones ni todas.", false);
+        Herramienta.propiedad(s, "pagina", "integer", "Página de 'seccion' (desde 1).", false);
+        Herramienta.propiedad(s, "tamPagina", "integer", "Filas por página en seccion=servicios (por defecto 40, máx. 100).", false);
+        Herramienta.propiedad(s, "refrescar", "boolean", "Ignora la caché y vuelve a escanear.", false);
+        Herramienta.propiedad(s, "continuar", "boolean", "Retoma la tanda guardada: el usuario escribió `continuar` o perdiste el hilo.", false);
+        Herramienta.propiedad(s, "paralelo", "boolean", "Solo Claude Code con subagentes (Agent), nunca Copilot: reparte el plan en bloques.", false);
         return s;
     }
 
@@ -277,7 +235,7 @@ public class HerramientaEscanear implements Herramienta {
         }
         sesion.olvidarSeleccionesUsuario(proyecto);
         sesion.fijarTodas(proyecto, todas);
-        ProyectoEscaneado p = sesion.fachada().proyecto(proyecto, refrescar);
+        ProyectoEscaneado p = sesion.fachada().proyectoVigente(proyecto, refrescar);
         anotarPerfil(sesion, p, salida);
         Integer n = numServicios;
         InterpretePeticion.Resultado ip = null;
@@ -327,6 +285,21 @@ public class HerramientaEscanear implements Herramienta {
                 op.modulosRel.addAll(plan.modulosRel());
                 op.clasesFqn.addAll(plan.fqns());
                 op.siguientePaso = siguientePasoPlan(plan, sesion, proyecto, salida);
+                boolean paralelo = args != null && args.has("paralelo")
+                        ? Herramienta.bool(args, "paralelo")
+                        : BloquesTanda.clienteConSubagentes(sesion);
+                if (paralelo) {
+                    String motivo = BloquesTanda.motivoNoPermitido(sesion, proyecto, salida);
+                    if (motivo == null) {
+                        BloquesTanda.repartir(sesion, proyecto, plan);
+                        if (salida != null && Files.isDirectory(salida)) {
+                            sesion.guardarTanda(proyecto, salida, Boolean.FALSE);
+                        }
+                        op.siguientePaso = BloquesTanda.siguientePaso(sesion, proyecto, salida, null);
+                    } else {
+                        sesion.anotar(motivo);
+                    }
+                }
             } else {
                 sesion.quitarPlan(proyecto);
                 sesion.iniciarTanda(proyecto, null);
@@ -531,11 +504,12 @@ public class HerramientaEscanear implements Herramienta {
     /** Reglas de los casos del spec. */
     static final String REGLAS_SPEC = "En el spec, por cada función seleccionada, exactamente los casos metodo=N de "
             + "accionRequerida (= `casosPlan.faltan`; nunca más de su "
-            + "`maxCasos`; cada caso con `queHaceOriginal` y `queComprueba`, 1 frase de máx. 160 caracteres; en las que ya tienen "
+            + "`maxCasos`; `queHaceOriginal` una vez por función (en su primer caso) y `queComprueba` en cada caso, 1 frase de "
+            + "máx. 160 caracteres; en las que ya tienen "
             + "tests, solo escenarios distintos de `casosExistentes` y `casosGeneradosEnSalida`).";
     /** Flujo por servicio, compacto, para la respuesta de `continuar` (la IA puede estar en un chat nuevo). */
-    static final String FLUJO_CONTINUAR = FLUJO_SERVICIO + " Casos de casosPlan (máx. maxCasos; cada caso con queHaceOriginal "
-            + "y queComprueba; solo escenarios nuevos); sigue en cada respuesta la primera línea accionRequerida («NO HAS "
+    static final String FLUJO_CONTINUAR = FLUJO_SERVICIO + " Casos de casosPlan (máx. maxCasos; queHaceOriginal una vez "
+            + "por función y queComprueba en cada caso; solo escenarios nuevos); sigue en cada respuesta la primera línea accionRequerida («NO HAS "
             + "TERMINADO (servicio k de N): llama ahora a …») sin escribir nada al usuario hasta plan.restantes = 0. Las pruebas van en segundo plano: no esperes; "
             + "no corrijas nada durante la tanda: los casos que fallen se apuntan solos y se arreglan al final (solo con "
             + "`arreglos: inmediato` se corrigen al llegar la nota «Verificación en segundo plano…»). "
@@ -751,6 +725,12 @@ public class HerramientaEscanear implements Herramienta {
             sb.append("- Siguiente: ninguno (todos los servicios están generados)\n");
         }
         sb.append("- Casos generados en la tanda: ").append(sesion.casosDeSesion(salida).size()).append('\n');
+        List<Integer> bloquesSinTerminar = BloquesTanda.sinTerminar(t);
+        boolean enBloques = BloquesTanda.activo(t);
+        if (enBloques) {
+            sb.append("- Bloques: ").append(BloquesTanda.ids(t).size()).append(" (sin terminar: ")
+                    .append(bloquesSinTerminar.isEmpty() ? "ninguno" : BloquesTanda.listaIds(bloquesSinTerminar)).append(")\n");
+        }
         if (reprobados > 0) {
             sb.append("- Se vuelven a probar en segundo plano: ").append(reprobados).append(reprobados == 1 ? " servicio\n" : " servicios\n");
         }
@@ -764,7 +744,10 @@ public class HerramientaEscanear implements Herramienta {
         String paso = HerramientaGenerar.siguientePaso(sesion, proyecto);
         String decision = sesion.decisionVerificacion();
         boolean puerta = sesion.verificaciones().puertaActiva(salida);
-        if (paso != null) {
+        if (enBloques && !bloquesSinTerminar.isEmpty()) {
+            sb.append(BloquesTanda.siguientePaso(sesion, proyecto, salida, bloquesSinTerminar)).append(' ').append(PROHIBICIONES)
+                    .append('\n');
+        } else if (paso != null) {
             List<VerificacionesSesion.Correccion> cs = puerta ? sesion.verificaciones().correcciones(salida) : List.of();
             if (!cs.isEmpty()) {
                 sb.append("ANTES de seguir: corrige los errores de montaje de `").append(Textos.nombreSimple(cs.get(0).fqn()))
@@ -859,7 +842,8 @@ public class HerramientaEscanear implements Herramienta {
                 - LimitesRespuesta.bytes(siguiente) - LimitesRespuesta.bytes(SECCIONES_BAJO_PETICION) - 2;
         String medio = plan != null ? plan.markdownCompacto(libre) : serviciosQueQuepan(p, salida, op, libre);
         String candidatas = "";
-        if (plan != null && !plan.servicios().isEmpty() && plan.pendiente(plan.servicios().get(0))) {
+        if (plan != null && !plan.servicios().isEmpty() && plan.pendiente(plan.servicios().get(0))
+                && !BloquesTanda.activo(sesion, proyecto)) {
             String bloque = bloqueCandidatas(plan.servicios().get(0));
             if (LimitesRespuesta.bytes(bloque) <= libre - LimitesRespuesta.bytes(medio) - 2) {
                 candidatas = bloque;

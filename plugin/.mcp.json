@@ -8,7 +8,11 @@
         "-jar",
         "${CLAUDE_PLUGIN_ROOT}/junit-gen.jar",
         "mcp"
-      ]
+      ],
+      "env": {
+        "JUNITGEN_MAX_RESPUESTA": "24000",
+        "JUNITGEN_PREESCANEO": "1"
+      }
     }
   }
 }

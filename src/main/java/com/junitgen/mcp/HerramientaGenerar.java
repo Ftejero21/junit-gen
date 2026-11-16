@@ -10,11 +10,15 @@ import com.junitgen.generacion.GeneradorTests;
 import com.junitgen.generacion.ResultadoGeneracion;
 import com.junitgen.generacion.Tanda;
 import com.junitgen.duplicados.Duplicado;
+import com.junitgen.escaneo.InfoClase;
 import com.junitgen.escaneo.ProyectoEscaneado;
+import com.junitgen.escaneo.SeleccionFunciones;
 import com.junitgen.seguridad.RutaSegura;
 import com.junitgen.spec.ErrorValidacion;
 import com.junitgen.spec.LectorSpec;
 import com.junitgen.spec.ResultadoValidacion;
+import com.junitgen.spec.SeleccionSpec;
+import com.junitgen.spec.ServicioSpec;
 import com.junitgen.util.Json;
 import com.junitgen.util.LimitesRespuesta;
 import com.junitgen.util.Recursos;
@@ -22,6 +26,7 @@ import com.junitgen.util.Textos;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -74,56 +79,31 @@ public class HerramientaGenerar implements Herramienta {
 
     @Override
     public String descripcion() {
-        return "Genera (o amplía) un test por servicio en carpetaSalida a partir del spec (lo valida: validar_spec es opcional; "
-                + "si devuelve errores, corrige y repite), con la plantilla adecuada "
-                + "a JUnit 4/5, Mockito y AssertJ del proyecto. Guarda spec.json e informe.md. Solo añade casos nuevos; nunca "
-                + "escribe en el proyecto. Sin 'carpetaSalida' usa la elegida en la sesión (o la pregunta si aún no se preguntó). "
-                + "Llámala para cada servicio (o con varios servicios del mismo módulo en un spec) sin llamar a ejecutar_tests "
-                + "entre ellos. No pregunta si probar los tests: devuelve verificacion.decision=probar (decisión de toda la "
-                + "sesión, verificacion.alcance=sesion; también con plan) y encola la prueba de esos servicios en segundo plano: "
-                + "responde enseguida, no esperes ni sondees y sigue con el siguiente servicio. No corrijas nada durante la tanda: "
-                + "los casos que fallen se apuntan solos y se arreglan al final (fase de arreglo de ejecutar_tests, con "
-                + "arreglar_caso); solo con `arreglos: inmediato` se corrigen al llegar la nota «Verificación en segundo plano…». Al terminar "
-                + "todos los servicios llama a ejecutar_tests sin argumentos (repítela mientras devuelva verificando=true). Solo si "
-                + "junit-gen.yml del proyecto indica `verificacion: nunca` devuelve 'descartar' (no se prueba nada ni ejecutes) y "
-                + "con `verificacion: preguntar` pregunta una vez [Probar tests] [Descartar]. "
-                + "Con un plan de escanear_proyecto(numServicios o servicios) activo la respuesta es compacta y empieza por la "
-                + "línea accionRequerida «NO HAS TERMINADO (servicio k de N): llama ahora a …» (el paso exacto: completar ESE "
-                + "servicio con los casos metodo=N que falten, o empezar el siguiente; si trae siguienteServicio {clase, candidatas}, "
-                + "elige de ahí y llama a seleccionar_funciones con funciones): hazla sin escribir nada al usuario hasta "
-                + "plan.restantes = 0. Trae 'plan' {total, generados, restantes, servicios, servicioEnCurso, faltan}; "
-                + "servicioCerrado = servicio atascado que junit-gen cierra solo (no insistas). resumenSesion y respuestaFinal "
-                + "solo llegan cuando no queda nada pendiente o no se van a ejecutar los tests. Cada caso nuevo va sobre una función listada por detalle_servicio (las elegidas con "
-                + "seleccionar_funciones o por el usuario; sin elección, la selección automática de junit-gen), sin superar su maxCasos, y con "
-                + "queHaceOriginal y queComprueba (1 frase, máx. 160 caracteres; se escriben como comentario del test); junit-gen "
-                + "rechaza lo demás (FUNCION_NO_SELECCIONADA, EXCESO_CASOS, FALTA_COMENTARIO). Rechaza sin escribir nada (REQUIERE_DECISION_USUARIO) "
-                + "reemplazar o eliminar casos en fallo_asercion, posible_bug o dudoso sin veredicto error_ia registrado con "
-                + "registrar_analisis_ia (o decisión del usuario con `fallosAsercion: preguntar`): nunca los incluyas en "
-                + "reemplazarCasos/eliminarCasos por tu cuenta. "
-                + "Solo con `verificacion: preguntar`: si esa pregunta queda sin responder (caduca), devuelve "
-                + "verificacion.decision=pendiente_usuario con respuestaFinal: no decidas por el usuario; ejecutar_tests la repite.";
+        return "Genera los tests de uno o varios servicios en carpetaSalida a partir del spec (lo valida: corrige los errores y "
+                + "repite) y guarda spec.json e informe.md. Solo añade casos nuevos; nunca escribe en el proyecto. Cada caso: "
+                + "queHaceOriginal una vez por función y queComprueba en cada caso; sin 'id' lo deduce. Los tests se prueban en "
+                + "segundo plano: no esperes ni corrijas durante la tanda. Corregir un caso: reemplazarCasos con su id (nunca los "
+                + "de fallo_asercion, posible_bug o dudoso sin veredicto de registrar_analisis_ia). En un bloque, 'seleccion' es "
+                + "obligatoria y trae siguienteServicio. Sigue accionRequerida; no escribas al usuario hasta respuestaFinal.";
     }
 
     @Override
     public ObjectNode esquema() {
         ObjectNode s = Herramienta.esquemaBase();
         ObjectNode props = (ObjectNode) s.get("properties");
-        ObjectNode spec = Recursos.esquemaSpec();
-        spec.put("description", "Spec JSON v1 validado (objeto, o cadena con el JSON).");
+        ObjectNode spec = Recursos.esquemaSpecMcp();
+        spec.put("description", "Spec (objeto o cadena JSON). Parte de plantillaSpec: junit-gen completa version, proyecto, estilo, "
+                + "claseTest, id, imports y parametros.");
         props.set("spec", spec);
-        Herramienta.propiedad(s, "rutaSpec", "string", "Alternativa: ruta de un archivo con el spec.", false);
-        Herramienta.propiedad(s, "carpetaSalida", "string", "Carpeta de salida (fuera del proyecto); si se omite, la elegida en la sesión.", false);
-        Herramienta.propiedad(s, "guardarRutaPorDefecto", "boolean", "Con carpetaSalida elegida en el chat: el usuario pidió guardarla como ruta por defecto del proyecto.", false);
-        Herramienta.propiedad(s, "decisionVerificacion", "string", "Solo si el usuario indicó expresamente en el chat que quiere "
-                + "probar o no ejecutar (descartar) los tests; se fija para toda la sesión. No la pases por tu cuenta.", false);
+        Herramienta.propiedad(s, "rutaSpec", "string", "Alternativa: archivo con el spec.", false);
+        Herramienta.propiedad(s, "carpetaSalida", "string", "Carpeta de salida (fuera del proyecto); por defecto, la de la sesión.", false);
+        Herramienta.propiedad(s, "guardarRutaPorDefecto", "boolean", "El usuario pidió guardar carpetaSalida como ruta por defecto.", false);
+        Herramienta.propiedad(s, "decisionVerificacion", "string", "Solo si el usuario dijo expresamente si probar o descartar los tests.", false);
         ((ObjectNode) props.get("decisionVerificacion")).putArray("enum").add(DECISION_PROBAR).add(DECISION_DESCARTAR);
-        Herramienta.propiedad(s, "reemplazarCasos", "array", "Ids de casos ya generados que se deben reescribir (tras corregir el "
-                + "spec). Casos con fallo de aserción, posible_bug o dudoso: solo con veredicto error_ia registrado con "
-                + "registrar_analisis_ia (o decisión del usuario con `fallosAsercion: preguntar`); si no, se rechaza toda la llamada.", false);
-        Herramienta.propiedad(s, "eliminarCasos", "array", "Ids de casos generados a eliminar (requiere confirmadoPorUsuario). "
-                + "Nunca casos con fallo de aserción, posible_bug o dudoso: esos solo se eliminan con resolver_fallo si el usuario "
-                + "lo pide expresamente.", false);
-        Herramienta.propiedad(s, "confirmadoPorUsuario", "boolean", "El usuario ha confirmado explícitamente la eliminación.", false);
+        Herramienta.propiedad(s, "reemplazarCasos", "array", "Ids de casos ya generados que reescribes; fallo_asercion, posible_bug o "
+                + "dudoso solo con veredicto error_ia.", false);
+        Herramienta.propiedad(s, "eliminarCasos", "array", "Ids a eliminar (exige confirmadoPorUsuario); nunca casos protegidos.", false);
+        Herramienta.propiedad(s, "confirmadoPorUsuario", "boolean", "El usuario confirmó expresamente la eliminación.", false);
         return s;
     }
 
@@ -173,6 +153,12 @@ public class HerramientaGenerar implements Herramienta {
                     Herramienta.bool(args, "guardarRutaPorDefecto"));
         }
         op.todas = proyecto != null && sesion.todas(proyecto);
+        if (lectura.ok() && proyecto != null && !op.todas && op.reemplazar.isEmpty() && op.eliminar.isEmpty()) {
+            Resultado rechazoSeleccion = seleccionesDelSpec(sesion, lectura.spec().servicios, proyecto, salida);
+            if (rechazoSeleccion != null) {
+                return rechazoSeleccion;
+            }
+        }
         op.selecciones = proyecto == null ? Map.of() : sesion.selecciones(proyecto);
         // Casos acreditados por servicio antes de generar (salvaguarda anti-bucle); las correcciones no cuentan.
         Map<String, Integer> antes = sesion.acreditadosPorServicio(proyecto != null ? proyecto : sesion.fachada().ultimaRuta());
@@ -222,7 +208,7 @@ public class HerramientaGenerar implements Herramienta {
             if (g.respuestaFinal == null && GuiaTanda.activa(sesion, proyecto)) {
                 compactarEnTanda(vista, sesion, proyecto, cerrados);
             }
-            anadirSiguiente(vista, sesion, proyecto);
+            anadirSiguiente(vista, sesion, proyecto, serviciosDelSpec(gen.validacion()));
             return new Resultado(Json.compacto(vista), false);
         }
         ConfigProyecto.ModoVerificacion modo = CargadorConfig.modoVerificacion(proyecto);
@@ -302,8 +288,105 @@ public class HerramientaGenerar implements Herramienta {
         if (g.respuestaFinal == null && GuiaTanda.activa(sesion, proyecto)) {
             compactarEnTanda(vista, sesion, proyecto, cerrados);
         }
-        anadirSiguiente(vista, sesion, proyecto);
+        anadirSiguiente(vista, sesion, proyecto, serviciosDelSpec(gen.validacion()));
         return new Resultado(Json.compacto(vista), false);
+    }
+
+    // ------------------------------------------------------------- selección de funciones dentro del spec
+
+    /** Código del rechazo de un servicio de un bloque cuyo spec no trae {@code seleccion}. */
+    static final String COD_FALTA_SELECCION = "FALTA_SELECCION";
+
+    /**
+     * Aplica la {@code seleccion} de los servicios del spec que están en el plan y aún no tienen selección: equivale a
+     * seleccionar_funciones (mismas reglas, guarda la selección y recalcula el plan del servicio). Una selección inválida o
+     * ausente en un bloque rechaza la llamada (cuenta como spec rechazado en la salvaguarda anti-bucle); fuera de un
+     * bloque la inválida se ignora con la nota SELECCION_IGNORADA y la ausente no se exige. null si no hay nada que rechazar.
+     */
+    private static Resultado seleccionesDelSpec(SesionMcp sesion, List<ServicioSpec> servicios, Path proyecto, Path salida) {
+        if (servicios == null || sesion.progresoPlanGlobal(proyecto) == null) {
+            return null;
+        }
+        boolean enBloque = sesion.bloqueLlamada() != null;
+        for (int i = 0; i < servicios.size(); i++) {
+            ServicioSpec sv = servicios.get(i);
+            SeleccionSpec s = sv == null ? null : sv.seleccion;
+            if (sv == null || sv.clase == null || (s == null && !enBloque)) {
+                continue;
+            }
+            ProyectoEscaneado.Encontrada en;
+            try {
+                en = sesion.fachada().localizarClase(sv.clase, proyecto, sv.modulo, sesion.modulosTrabajo(proyecto));
+            } catch (RuntimeException e) {
+                continue; // la validación del spec informa de la clase que no existe
+            }
+            InfoClase c = en.clase();
+            if (!sesion.enPlan(proyecto, c.fqn) || !sesion.necesitaSeleccion(proyecto, salida, c.fqn)) {
+                continue;
+            }
+            String ruta = "servicios[" + i + "].seleccion";
+            boolean trae = s != null && s.funciones != null && !s.funciones.isEmpty()
+                    && (s.origen == null || SeleccionFunciones.ORIGEN_IA.equals(s.origen));
+            List<ErrorValidacion> errores;
+            if (trae) {
+                SeleccionSpec propuesta = new SeleccionSpec();
+                propuesta.origen = SeleccionFunciones.ORIGEN_IA;
+                propuesta.funciones = s.funciones;
+                propuesta.omitidas = s.omitidas;
+                SeleccionFunciones.Eleccion el = HerramientaSeleccionar.registrarEleccion(sesion, proyecto, salida, en.modulo(), c,
+                        propuesta);
+                if (el.valida()) {
+                    continue;
+                }
+                errores = el.errores();
+                if (!enBloque) {
+                    sesion.anotar("SELECCION_IGNORADA: " + ruta + " no es válida (" + errores.get(0).codigo + "); se usa la "
+                            + "selección automática de junit-gen. Elige con seleccionar_funciones.");
+                    continue;
+                }
+            } else if (enBloque) {
+                errores = List.of(ErrorValidacion.error(ruta, COD_FALTA_SELECCION, "En un bloque cada servicio del spec debe traer "
+                        + ruta + " (funciones elegidas con motivo).", "Añade a " + sv.clase + " la clave `seleccion` con el "
+                        + "esqueleto de `esqueleto` (el de plantillaSpec): motivo de 1 frase en cada función y entre el mínimo y el "
+                        + "máximo de funciones."));
+            } else {
+                continue;
+            }
+            return rechazoSeleccion(sesion, proyecto, salida, i, en, errores, !trae);
+        }
+        return null;
+    }
+
+    /** Rechazo (isError) de una selección ausente o inválida de un bloque; si agota los intentos, cierra el servicio. */
+    private static Resultado rechazoSeleccion(SesionMcp sesion, Path proyecto, Path salida, int indice,
+                                              ProyectoEscaneado.Encontrada en, List<ErrorValidacion> errores, boolean falta) {
+        List<String> cerrados = sesion.registrarIntento(proyecto, List.of(en.clase().fqn), null, true);
+        if (!cerrados.isEmpty()) {
+            return servicioCerrado(sesion, proyecto, salida, cerrados, errores);
+        }
+        SeleccionFunciones ref = SeleccionFunciones.de(en.modulo(), en.clase(), false);
+        ObjectNode r = Json.objeto();
+        r.put("valido", false);
+        ArrayNode arr = r.putArray("errores");
+        for (int n = 0; n < Math.min(HerramientaSeleccionar.MAX_ERRORES, errores.size()); n++) {
+            ErrorValidacion e = errores.get(n);
+            ObjectNode o = arr.addObject();
+            o.put("codigo", e.codigo);
+            o.put("ruta", e.ruta != null && e.ruta.startsWith("servicios[") ? e.ruta : "servicios[" + indice + "]." + e.ruta);
+            o.put("mensaje", e.mensaje);
+            if (e.sugerencia != null) {
+                o.put("sugerencia", e.sugerencia);
+            }
+        }
+        r.put("cupo", ref.cupo());
+        r.put("minimo", ref.minimo());
+        if (falta) {
+            r.set("esqueleto", BloquesTanda.esqueletoSeleccion(ref));
+        }
+        r.put("instruccion", "Corrige servicios[" + indice + "].seleccion y repite generar_tests");
+        LimitesRespuesta.acotarJson(r, LimitesRespuesta.PRESUPUESTO_CUERPO, List.of("errores"),
+                "Corrige los errores mostrados y vuelve a llamar: aparecerán los siguientes.");
+        return new Resultado(Json.compacto(r), true);
     }
 
     /** Registra en la sesión los casos generados, los descartados por duplicado y los eliminados de una generación correcta. */
@@ -333,6 +416,15 @@ public class HerramientaGenerar implements Herramienta {
      * añade {@code siguienteServicio {clase, candidatas}} solo si el bloque entero cabe en el presupuesto del cuerpo.
      */
     static void anadirSiguiente(ObjectNode vista, SesionMcp sesion, Path proyecto) {
+        anadirSiguiente(vista, sesion, proyecto, List.of());
+    }
+
+    /**
+     * Como {@link #anadirSiguiente(ObjectNode, SesionMcp, Path)}; {@code fqnsSpec} son los servicios del spec recién generado.
+     * En una llamada con bloque, si el siguiente servicio pendiente del bloque no es uno de ellos, añade
+     * {@code siguienteServicio {clase, paquete}} con su paquete de trabajo (si cabe en la respuesta).
+     */
+    static void anadirSiguiente(ObjectNode vista, SesionMcp sesion, Path proyecto, Collection<String> fqnsSpec) {
         if (vista == null || proyecto == null) {
             return;
         }
@@ -346,6 +438,10 @@ public class HerramientaGenerar implements Herramienta {
                 return;
             }
             String siguiente = siguienteServicio(sesion, proyecto);
+            if (siguiente != null && sesion.bloqueLlamada() != null) {
+                anadirPaqueteSiguiente(vista, sesion, proyecto, salida, siguiente, fqnsSpec);
+                return;
+            }
             if (siguiente == null || !sesion.necesitaSeleccion(proyecto, salida, siguiente)) {
                 return;
             }
@@ -364,6 +460,26 @@ public class HerramientaGenerar implements Herramienta {
         }
     }
 
+    /** {@code siguienteServicio {clase, paquete}} de un bloque: paquete de trabajo del siguiente servicio si cabe en la respuesta. */
+    private static void anadirPaqueteSiguiente(ObjectNode vista, SesionMcp sesion, Path proyecto, Path salida, String siguiente,
+                                               Collection<String> fqnsSpec) {
+        if (fqnsSpec != null && fqnsSpec.contains(siguiente)) {
+            return;
+        }
+        int presupuesto = Math.min(LimitesRespuesta.presupuestoPaquete(), LimitesRespuesta.maxRespuesta() - LimitesRespuesta.MAX_CABECERA
+                - LimitesRespuesta.bytes(Json.compacto(vista)) - MARGEN_SIGUIENTE);
+        if (presupuesto < com.junitgen.escaneo.PaqueteTrabajo.MIN_PAGINA) {
+            return;
+        }
+        ObjectNode paquete = BloquesTanda.paquete(sesion, proyecto, salida, siguiente, presupuesto, false);
+        ObjectNode sig = vista.putObject("siguienteServicio");
+        sig.put("clase", siguiente);
+        sig.set("paquete", paquete);
+    }
+
+    /** Margen de la respuesta que se deja libre al añadir el paquete del siguiente servicio de un bloque. */
+    static final int MARGEN_SIGUIENTE = 200;
+
     /**
      * Vuelca la tanda a tanda.json tras registrar con éxito (la crea en disco si la salida se eligió después del
      * escaneo). Con tests nuevos la tanda deja de estar cerrada.
@@ -380,6 +496,9 @@ public class HerramientaGenerar implements Herramienta {
      */
     static void respuestaFinalSiNoHayVerificacion(SesionMcp sesion, Path proyecto, Path salida, ResultadoGeneracion g,
                                                   String decision) {
+        if (sesion.bloqueLlamada() != null) {
+            return; // dentro de un bloque no hay mensaje final: lo da el agente principal al cerrar la tanda
+        }
         SesionMcp.ProgresoPlan p = sesion.progresoPlan(proyecto);
         boolean fin = (DECISION_DESCARTAR.equals(decision) && (p == null || p.restantes() == 0))
                 || (p != null && p.restantes() == 0 && p.casosEscritos() == 0)
@@ -460,6 +579,11 @@ public class HerramientaGenerar implements Herramienta {
         } else {
             String base = "Plan completo (" + p.total() + " casos de " + p.metodosTotal() + " métodos en " + p.servicios()
                     + " servicios): no generes más";
+            if (sesion.bloqueLlamada() != null) {
+                g.plan.put("instruccion", base + "; llama a " + BloquesTanda.llamadaEjecutar(sesion) + " (prueba y arregla tu bloque: "
+                        + "espera a las pruebas en segundo plano; si responde verificando=true, vuelve a llamarla).");
+                return;
+            }
             g.plan.put("instruccion", DECISION_DESCARTAR.equals(decision)
                     ? base + ". La decisión de la sesión es descartar: no ejecutes los tests salvo petición expresa del usuario; "
                     + "tu mensaje final es EXACTAMENTE respuestaFinal, tal cual."
@@ -621,6 +745,12 @@ public class HerramientaGenerar implements Herramienta {
         if (cerrados.isEmpty()) {
             return null;
         }
+        return servicioCerrado(sesion, proyecto, salida, cerrados, gen.resultado().errores);
+    }
+
+    /** Respuesta sin error de un servicio cerrado por la salvaguarda (guarda la tanda): {servicioCerrado, motivo, instruccion, errores}. */
+    private static Resultado servicioCerrado(SesionMcp sesion, Path proyecto, Path salida, List<String> cerrados,
+                                             List<ErrorValidacion> lista) {
         sesion.guardarTanda(proyecto, salida);
         Map<String, String> motivos = sesion.cerradosPorSalvaguarda(proyecto);
         String fqn = cerrados.get(0);
@@ -629,7 +759,6 @@ public class HerramientaGenerar implements Herramienta {
         r.put("motivo", motivos.get(fqn));
         r.put("instruccion", "No repitas este servicio: sigue la primera línea accionRequerida.");
         ArrayNode errores = r.putArray("errores");
-        List<ErrorValidacion> lista = gen.resultado().errores;
         for (int i = 0; i < Math.min(MAX_ERRORES_CIERRE, lista.size()); i++) {
             ObjectNode o = errores.addObject();
             o.put("codigo", lista.get(i).codigo);

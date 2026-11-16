@@ -9,6 +9,7 @@ import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.junitgen.generacion.AlmacenSpec;
 import com.junitgen.spec.CasoSpec;
 import com.junitgen.spec.CompatibilidadJava;
+import com.junitgen.spec.NormalizadorMatchers;
 import com.junitgen.spec.SeleccionSpec;
 import com.junitgen.spec.ServicioSpec;
 import com.junitgen.spec.Spec;
@@ -385,6 +386,42 @@ public final class DetalleServicio {
         return s;
     }
 
+    /**
+     * Plantilla de spec compacta del paquete de trabajo: solo lo que escribe la IA ({@code clase}, {@code construccion} si
+     * hay dependencias de valor y un caso de ejemplo); junit-gen completa el resto ({@code CompletadorSpec}). El método del
+     * ejemplo se elige igual que en {@link #plantilla}.
+     */
+    static ObjectNode plantillaCompacta(InfoClase c, AnalisisServicio a, List<InfoMetodo> publicos,
+                                        EmparejadorTests.Emparejamiento e) {
+        ObjectNode s = Json.objeto();
+        ObjectNode sv = s.putArray("servicios").addObject();
+        sv.put("clase", c.fqn);
+        ObjectNode argumentos = Json.objeto();
+        for (Dependencia d : a.dependencias) {
+            if (d.requiereValor) {
+                argumentos.put(d.nombre, "<literal Java de tipo " + d.tipo + ">");
+            }
+        }
+        if (!argumentos.isEmpty()) {
+            sv.putObject("construccion").set("argumentos", argumentos);
+        }
+        ArrayNode casos = sv.putArray("casos");
+        for (InfoMetodo m : publicos) {
+            if (m.esAccessor() || !e.casosDe(m.nombre, m.aridad()).isEmpty() || a.refactor.containsKey(m.clave())) {
+                continue;
+            }
+            ObjectNode cs = casos.addObject();
+            cs.put("metodo", m.nombre);
+            cs.put("escenario", "<escenarioEnCamelCase>");
+            cs.put("queHaceOriginal", "<qué hace la función, 1 frase; solo en el primer caso de cada función>");
+            cs.put("queComprueba", "<qué comprueba este test, 1 frase>");
+            cs.putArray("argumentos");
+            cs.putObject("esperado").put("tipo", m.esVoid() ? "sinRetorno" : "valor");
+            break;
+        }
+        return s;
+    }
+
     /** Caracteres reservados para la nota de truncado. */
     private static final int RESERVA_NOTA = 600;
 
@@ -520,18 +557,35 @@ public final class DetalleServicio {
                                                                          InfoMetodo m) {
         Map<String, LlamadasDependencias.Stub> r = new LinkedHashMap<>();
         int java = java(me);
+        NormalizadorMatchers.Politica politica = NormalizadorMatchers.Politica.de(me.versiones);
         for (LlamadasDependencias.Llamada l : LlamadasDependencias.de(me, c, m)) {
             String k = l.dependencia() + "." + l.metodo() + "/" + l.aridad();
             Dependencia d = a.dependencia(l.dependencia());
-            if (d == null || r.containsKey(k)) {
+            // Las dependencias reales (por defecto o de propiedades) no se stubean: no son mocks.
+            if (d == null || r.containsKey(k) || d.realPorDefecto != null || esPropiedades(d, c, me.indice)) {
                 continue;
             }
-            LlamadasDependencias.Stub st = LlamadasDependencias.stub(d, l, c, me.indice, java);
+            LlamadasDependencias.Stub st = LlamadasDependencias.stub(d, l, c, me.indice, java, m, politica);
             if (st != null) {
                 r.put(k, st);
             }
         }
         return r;
+    }
+
+    /** true si el tipo de la dependencia es una clase instanciable del proyecto anotada con {@code @ConfigurationProperties}. */
+    static boolean esPropiedades(Dependencia d, InfoClase c, IndiceTipos idx) {
+        InfoClase t = tipoDelProyecto(d, c, idx);
+        return t != null && t.tieneAnotacion(PaqueteTrabajo.ANOTACION_PROPIEDADES) && t.tipo == InfoClase.Tipo.CLASE && !t.abstracta;
+    }
+
+    /** Clase del proyecto a la que resuelve el tipo de la dependencia; null si es externo o no se resuelve. */
+    static InfoClase tipoDelProyecto(Dependencia d, InfoClase c, IndiceTipos idx) {
+        if (d == null || idx == null) {
+            return null;
+        }
+        InfoClase t = d.tipoFqn == null ? null : idx.get(d.tipoFqn);
+        return t != null ? t : (d.tipo == null ? null : idx.resolverClase(d.tipo, c));
     }
 
     static ArrayNode nodoStubs(Collection<LlamadasDependencias.Stub> stubs, int max) {
@@ -542,7 +596,12 @@ public final class DetalleServicio {
             }
             ObjectNode o = r.addObject();
             o.put("llamada", st.llamada());
-            o.put("retorno", st.retorno());
+            if (st.retorno() != null) {
+                o.put("retorno", st.retorno());
+            }
+            if (st.stub() != null) {
+                o.put("stub", st.stub());
+            }
             if (st.devuelve() != null) {
                 o.put("devuelve", st.devuelve());
             }

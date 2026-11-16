@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -234,6 +235,15 @@ public class IndiceTipos {
     }
 
     private static List<Path> listarJava(Path dir, IndiceTipos idx) {
+        return listarJava(dir, idx.avisos);
+    }
+
+    /** Archivos .java de {@code dir} (sin enlaces ni module-info/package-info), ordenados; solo lee. */
+    static List<Path> listarJava(Path dir) {
+        return listarJava(dir, new ArrayList<>());
+    }
+
+    private static List<Path> listarJava(Path dir, Collection<String> avisos) {
         List<Path> r = new ArrayList<>();
         if (!Files.isDirectory(dir)) {
             return r;
@@ -260,12 +270,12 @@ public class IndiceTipos {
 
                 @Override
                 public FileVisitResult visitFileFailed(Path file, IOException exc) {
-                    idx.avisos.add("No se pudo leer " + file + ": " + exc.getMessage());
+                    avisos.add("No se pudo leer " + file + ": " + exc.getMessage());
                     return FileVisitResult.CONTINUE;
                 }
             });
         } catch (IOException e) {
-            idx.avisos.add("No se pudo recorrer " + dir + ": " + e.getMessage());
+            avisos.add("No se pudo recorrer " + dir + ": " + e.getMessage());
         }
         Collections.sort(r);
         return r;

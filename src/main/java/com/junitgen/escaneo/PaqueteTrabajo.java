@@ -59,6 +59,8 @@ public final class PaqueteTrabajo {
     /** Nivel de recorte de {@link DetalleServicio#montajeConstructor} (cuerpo del constructor recortado). */
     static final int NIVEL_MONTAJE = 3;
     static final String ANOTACION_PROPIEDADES = "ConfigurationProperties";
+    /** Nombre de la instancia bajo prueba si el estilo no lo trae. */
+    static final String NOMBRE_INSTANCIA_POR_DEFECTO = "service";
     static final String SIN_RESTRICCIONES = "Sin restricciones";
     static final String CONSTRUCTOR_POR_DEFECTO = "(por defecto, sin parámetros)";
 
@@ -76,7 +78,10 @@ public final class PaqueteTrabajo {
     static final String METODOS = "metodos";
     static final String INTERNOS = "metodosInternos";
     static final String STUBS = "stubsTipicos";
-    static final String TIPOS = "tiposAuxiliares";
+    /** Clave de los tipos auxiliares del paquete (cada uno con su {@code fqn}). */
+    public static final String TIPOS = "tiposAuxiliares";
+    /** Clave de los nombres de los tipos que no se repiten porque un paquete anterior del bloque ya los envió. */
+    static final String TIPOS_YA_ENVIADOS = "tiposYaEnviados";
     static final String HELPERS = "helpersExternos";
     /** Claves de los bloques en el orden de prioridad de llenado. */
     static final List<String> CLAVES_BLOQUES = List.of(METODOS, INTERNOS, STUBS, TIPOS, HELPERS);
@@ -89,8 +94,8 @@ public final class PaqueteTrabajo {
     static final List<String> CLAVES_OMITIDO = List.of(OM_METODOS, OM_INTERNOS, OM_TIPOS, OM_HELPERS, OM_STUBS);
 
     /** Orden de recorte de la red final (de menos a más importante). */
-    static final List<String> ORDEN_RECORTE = List.of(HELPERS, TIPOS, STUBS, "testsEmparejados", "restriccionesJava", "recetas",
-            "montaje.cuerpoConstructor", INTERNOS, "dependencias", "mocks");
+    static final List<String> ORDEN_RECORTE = List.of(HELPERS, TIPOS, "testsEmparejados", "restriccionesJava", "recetas",
+            "montaje.cuerpoConstructor", INTERNOS, STUBS, "dependencias", "mocks");
 
     private PaqueteTrabajo() {
     }
@@ -110,7 +115,7 @@ public final class PaqueteTrabajo {
         /** Recetas, versiones, restricciones, tests emparejados, selección y plantillaSpec. */
         public boolean conPlantilla = true;
         public boolean conMontaje = true;
-        /** plantillaSpec con el esqueleto de caso (claseTest, imports, fixtures, casos). */
+        /** Se conserva por compatibilidad: la plantillaSpec es siempre la compacta, con el caso de ejemplo. */
         public boolean plantillaCompleta;
         /** fqn#metodo → {previstos, faltan} del plan activo; vacío sin plan. */
         public Map<String, int[]> casosPlan = new LinkedHashMap<>();
@@ -124,6 +129,8 @@ public final class PaqueteTrabajo {
         public String modulo;
         /** true = sin el bloque de stubs típicos. */
         public boolean sinStubsTipicos;
+        /** FQN de tipos que un paquete anterior del mismo bloque ya envió: no se repiten, solo se nombran en {@code tiposYaEnviados}. */
+        public Set<String> tiposYaEnviados = new LinkedHashSet<>();
     }
 
     /** Bloque de contenido: clave de destino, nodo, categoría y nombre para {@code omitido}, y clave de la función elegida. */
@@ -134,7 +141,7 @@ public final class PaqueteTrabajo {
     }
 
     /** Bloques ordenados y lo excluido siempre (por topes o cuerpos recortados), por categoría de {@code omitido}. */
-    private record Contenido(List<Bloque> bloques, Map<String, Set<String>> excluidos) {
+    private record Contenido(List<Bloque> bloques, Map<String, Set<String>> excluidos, List<String> tiposYaEnviados) {
     }
 
     private record Interno(InfoMetodo metodo, int profundidad) {
@@ -174,6 +181,10 @@ public final class PaqueteTrabajo {
         inicio = Math.min(inicio, bl.size());
         int fin = corte(base, bl, inicio, op.presupuesto);
         ObjectNode r = armar(base, bl, inicio, fin, op.pagina == 1);
+        if (op.pagina == 1 && !k.tiposYaEnviados().isEmpty()) {
+            ArrayNode ya = r.putArray(TIPOS_YA_ENVIADOS);
+            k.tiposYaEnviados().forEach(ya::add);
+        }
         boolean resto = fin < bl.size();
         ObjectNode pg = Json.objeto();
         pg.put("pagina", op.pagina);
@@ -206,7 +217,9 @@ public final class PaqueteTrabajo {
                 pg.put("instruccion", INSTRUCCION_ELEGIDAS);
             } else {
                 pg.putNull("siguiente");
-                pg.put("instruccion", resto || conOmitido ? INSTRUCCION_OMITIDO : INSTRUCCION_COMPLETO);
+                if (resto || conOmitido) {
+                    pg.put("instruccion", INSTRUCCION_OMITIDO);
+                }
             }
         }
         if (!r.has("ampliar") && conRecorte(bl, inicio, fin)) {
@@ -342,6 +355,8 @@ public final class PaqueteTrabajo {
         if (op.conMontaje) {
             ObjectNode m = r.putObject("montaje");
             m.put("modo", a.modo.toString());
+            String instancia = me.estilo == null || me.estilo.sugerencia == null ? null : me.estilo.sugerencia.nombreCampoSut;
+            m.put("instancia", instancia == null || instancia.isBlank() ? NOMBRE_INSTANCIA_POR_DEFECTO : instancia);
             if (a.modo == Dependencia.ModoMontaje.EXPLICITO) {
                 m.put("constructor", LimitesRespuesta.recortar(a.constructor == null ? CONSTRUCTOR_POR_DEFECTO : a.constructor.firma(),
                         MAX_CONSTRUCTOR));
@@ -354,7 +369,9 @@ public final class PaqueteTrabajo {
         ArrayNode deps = Json.lista();
         for (Dependencia d : a.dependencias) {
             boolean notaVisible = d.nota != null && (!d.mockeable || d.notaVisible);
-            boolean especial = notaVisible || d.requiereValor || d.profundo || d.valorPorDefecto != null || d.contenedor != null;
+            boolean propiedades = DetalleServicio.esPropiedades(d, c, me.indice);
+            boolean especial = notaVisible || d.requiereValor || d.profundo || d.valorPorDefecto != null || d.contenedor != null
+                    || propiedades;
             if (d.esMockDeclarado() && !especial) {
                 mocks.add(d.nombre + ": " + d.tipo);
                 continue;
@@ -377,6 +394,15 @@ public final class PaqueteTrabajo {
             DetalleServicio.novedadesDependencia(o, d);
             if (notaVisible) {
                 o.put("nota", LimitesRespuesta.recortar(d.nota, MAX_NOTA));
+            }
+            // Dependencia real o de propiedades de una clase del proyecto: cómo instanciarla y configurarla.
+            InfoClase tipoProyecto = DetalleServicio.tipoDelProyecto(d, c, me.indice);
+            if (tipoProyecto != null && tipoProyecto.tipo == InfoClase.Tipo.CLASE && !tipoProyecto.abstracta
+                    && (propiedades || !d.esMockDeclarado() || d.realPorDefecto != null)) {
+                String modo = DetalleServicio.fabrica(o, tipoProyecto, me.indice, DetalleServicio.java(me));
+                if (modo != null && !o.has("setters")) {
+                    o.put("sinSetters", true);
+                }
             }
         }
         if (!mocks.isEmpty()) {
@@ -438,14 +464,7 @@ public final class PaqueteTrabajo {
                 r.put("seleccion", nota.asText());
             }
         }
-        ObjectNode ps = DetalleServicio.plantilla(p, me, c, a, sel.seleccionados(), e);
-        if (!op.plantillaCompleta) {
-            JsonNode sv = ps.path("servicios").get(0);
-            if (sv instanceof ObjectNode o) {
-                o.remove(List.of("casos", "imports", "fixtures", "claseTest"));
-            }
-        }
-        r.set("plantillaSpec", ps);
+        r.set("plantillaSpec", DetalleServicio.plantillaCompacta(c, a, sel.seleccionados(), e));
     }
 
     // ------------------------------------------------------------- bloques
@@ -488,7 +507,18 @@ public final class PaqueteTrabajo {
                 excluidos.computeIfAbsent(OM_METODOS, x -> new LinkedHashSet<>()).add(m.clave());
             }
         }
-        // 2. Métodos de la clase llamados (profundidad 1, luego 2 y 3).
+        // 2. Stubs típicos de las funciones elegidas (justo tras las funciones: sobreviven al recorte de internos y tipos).
+        Map<String, LlamadasDependencias.Stub> stubs = new LinkedHashMap<>();
+        if (!op.sinStubsTipicos) {
+            for (InfoMetodo m : lista) {
+                DetalleServicio.stubsDeMetodo(me, c, a, m).forEach(stubs::putIfAbsent);
+            }
+        }
+        if (!stubs.isEmpty()) {
+            ArrayNode st = DetalleServicio.nodoStubs(stubs.values(), DetalleServicio.MAX_STUBS_TIPICOS);
+            bl.add(Bloque.de(STUBS, st, OM_STUBS, STUBS, null));
+        }
+        // 3. Métodos de la clase llamados (profundidad 1, luego 2 y 3).
         List<Interno> internos = internos(c, lista);
         for (Interno in : internos) {
             InfoMetodo m = in.metodo();
@@ -530,17 +560,6 @@ public final class PaqueteTrabajo {
                 excluidos.computeIfAbsent(OM_INTERNOS, x -> new LinkedHashSet<>()).add(m.clave());
             }
         }
-        // 3. Stubs típicos de las funciones elegidas.
-        Map<String, LlamadasDependencias.Stub> stubs = new LinkedHashMap<>();
-        if (!op.sinStubsTipicos) {
-            for (InfoMetodo m : lista) {
-                DetalleServicio.stubsDeMetodo(me, c, a, m).forEach(stubs::putIfAbsent);
-            }
-        }
-        if (!stubs.isEmpty()) {
-            ArrayNode st = DetalleServicio.nodoStubs(stubs.values(), DetalleServicio.MAX_STUBS_TIPICOS);
-            bl.add(Bloque.de(STUBS, st, OM_STUBS, STUBS, null));
-        }
         // 4. Tipos del proyecto que usan.
         List<InfoMetodo> conTipos = new ArrayList<>(lista);
         for (Interno in : internos) {
@@ -560,8 +579,13 @@ public final class PaqueteTrabajo {
             }
         }
         int nTipos = 0;
+        List<String> yaEnviados = new ArrayList<>();
         for (InfoClase t : tipos.values()) {
             if (t == c || t.esTest || t.tipo == InfoClase.Tipo.INTERFAZ) {
+                continue;
+            }
+            if (op.tiposYaEnviados != null && op.tiposYaEnviados.contains(t.fqn)) {
+                yaEnviados.add(t.simple);
                 continue;
             }
             if (nTipos >= MAX_TIPOS) {
@@ -575,7 +599,7 @@ public final class PaqueteTrabajo {
         List<InfoMetodo> conHelpers = new ArrayList<>(lista);
         internos.forEach(in -> conHelpers.add(in.metodo()));
         helpers(idx, c, conHelpers, bl, excluidos);
-        return new Contenido(bl, excluidos);
+        return new Contenido(bl, excluidos, yaEnviados);
     }
 
     /** Métodos de la misma clase llamados (sin scope o con this) desde las elegidas, en anchura, profundidad ≤ 3. */

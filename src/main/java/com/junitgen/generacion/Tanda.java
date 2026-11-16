@@ -62,6 +62,27 @@ public class Tanda {
     public Map<String, Medicion> mediciones = new LinkedHashMap<>();
     /** true si la sección «Medición de la tanda» ya está escrita en informe.md. */
     public boolean medicionInformada;
+    /** Bloques de trabajo en paralelo (solo Claude Code con subagentes); null = tanda secuencial. */
+    public List<BloqueTanda> bloques;
+
+    /** Estados de un bloque de trabajo en paralelo. */
+    public static final String BLOQUE_PENDIENTE = "pendiente";
+    public static final String BLOQUE_EN_CURSO = "en_curso";
+    public static final String BLOQUE_TERMINADO = "terminado";
+
+    /** Bloque de servicios que trabaja un único trabajador (subagente o el propio agente principal). */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class BloqueTanda {
+        public int id;
+        /** FQN de los servicios del bloque, en el orden del plan. */
+        public List<String> servicios = new ArrayList<>();
+        /** pendiente | en_curso | terminado. */
+        public String estado;
+        /** Instante (ISO-8601) en que un trabajador tomó el bloque por primera vez. */
+        public String tomado;
+        /** Instante (ISO-8601) en que el bloque quedó terminado. */
+        public String terminado;
+    }
 
     /** Tiempo y llamadas atribuidos a un servicio de la tanda. */
     @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -124,6 +145,8 @@ public class Tanda {
         public boolean menosEstricto;
         /** Avisos de calidad de las correcciones aceptadas. */
         public List<String> avisosCalidad = new ArrayList<>();
+        /** Motivo por el que se deshizo el último cambio de la parte común (servicio) hecho al corregir este caso. */
+        public String correccionDeshecha;
 
         /** Copia independiente del registro. */
         public ArregloTanda copia() {
@@ -149,6 +172,7 @@ public class Tanda {
             c.origen = origen;
             c.menosEstricto = menosEstricto;
             c.avisosCalidad = avisosCalidad == null ? new ArrayList<>() : new ArrayList<>(avisosCalidad);
+            c.correccionDeshecha = correccionDeshecha;
             return c;
         }
     }

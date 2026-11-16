@@ -6,6 +6,7 @@ import com.junitgen.escaneo.BuscadorServicios;
 import com.junitgen.escaneo.DetalleServicio;
 import com.junitgen.escaneo.InfoClase;
 import com.junitgen.escaneo.Escaner;
+import com.junitgen.escaneo.HuellaEscaneo;
 import com.junitgen.escaneo.InformeEscaneo;
 import com.junitgen.escaneo.PaqueteTrabajo;
 import com.junitgen.escaneo.ProyectoEscaneado;
@@ -26,6 +27,7 @@ import com.junitgen.seguridad.RutaSegura;
 import com.junitgen.seguridad.SeguridadException;
 import com.junitgen.spec.ErrorValidacion;
 import com.junitgen.spec.LectorSpec;
+import com.junitgen.spec.NormalizadorMatchers;
 import com.junitgen.spec.ResultadoValidacion;
 import com.junitgen.spec.SeleccionSpec;
 import com.junitgen.spec.Spec;
@@ -46,11 +48,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Única API de junit-gen, usada por la CLI y por el servidor MCP. */
 public class Fachada {
 
     private final Map<String, ProyectoEscaneado> cache = new ConcurrentHashMap<>();
+    /** Clave del proyecto → huella de lo que leyó su escaneo en caché ({@link HuellaEscaneo}); sin entrada = no reutilizable. */
+    private final Map<String, String> huellas = new ConcurrentHashMap<>();
     private volatile Path ultimaRuta;
 
     public static String aviso(Path proyecto, Path salida) {
@@ -67,10 +73,57 @@ public class Fachada {
         String clave = real.toString().toLowerCase();
         if (refrescar) {
             cache.remove(clave);
+            huellas.remove(clave);
         }
-        ProyectoEscaneado p = cache.computeIfAbsent(clave, k -> Escaner.escanear(real, null));
+        ProyectoEscaneado p = cache.computeIfAbsent(clave, k -> escanearConHuella(k, real));
         ultimaRuta = real;
         return p;
+    }
+
+    /** Escanea guardando antes la huella de lo que va a leer (null = nunca reutilizable). */
+    private ProyectoEscaneado escanearConHuella(String clave, Path real) {
+        String huella = HuellaEscaneo.calcular(real);
+        ProyectoEscaneado p = Escaner.escanear(real, null);
+        if (huella == null) {
+            huellas.remove(clave);
+        } else {
+            huellas.put(clave, huella);
+        }
+        return p;
+    }
+
+    /**
+     * Como {@link #proyecto(Path, boolean)} para escanear_proyecto: un escaneo en caché anterior a esta llamada solo se
+     * reutiliza si la huella de las fuentes y de los archivos de build no ha cambiado; ante cualquier duda se reescanea.
+     */
+    public ProyectoEscaneado proyectoVigente(Path ruta, boolean refrescar) {
+        long inicio = System.currentTimeMillis();
+        ProyectoEscaneado p = proyecto(ruta, refrescar);
+        if (refrescar || p.instante >= inicio) {
+            return p;
+        }
+        Path real = RutaSegura.validarProyecto(ruta);
+        String clave = real.toString().toLowerCase();
+        String guardada = huellas.get(clave);
+        String actual = HuellaEscaneo.calcular(real);
+        if (guardada != null && guardada.equals(actual)) {
+            return p;
+        }
+        return proyecto(real, true);
+    }
+
+    /**
+     * Llena la caché con el escaneo de {@code ruta} (pre-escaneo en segundo plano). No fija la última ruta, no lanza
+     * nada: un fallo solo deja la caché vacía y escribe la clase del error en stderr.
+     */
+    public void precalentar(Path ruta) {
+        try {
+            Path real = RutaSegura.validarProyecto(ruta);
+            String clave = real.toString().toLowerCase();
+            cache.computeIfAbsent(clave, k -> escanearConHuella(k, real));
+        } catch (RuntimeException e) {
+            System.err.println("Pre-escaneo: no se pudo escanear (" + e.getClass().getSimpleName() + ")");
+        }
     }
 
     public record Escaneo(ProyectoEscaneado proyecto, Path salida, String markdown) {
@@ -251,11 +304,10 @@ public class Fachada {
     /** Lee el spec desde un objeto/cadena JSON o desde un archivo. */
     public LectorSpec.Lectura leerSpec(JsonNode spec, Path rutaSpec) {
         if (rutaSpec != null) {
-            return LectorSpec.leerArchivo(rutaSpec);
+            return LectorSpec.leerArchivoEntrada(rutaSpec);
         }
-        return LectorSpec.leer(spec);
+        return LectorSpec.leerEntrada(spec);
     }
-
     private Path rutaProyecto(Spec spec, Path ruta) {
         if (ruta != null) {
             return ruta;
@@ -306,6 +358,8 @@ public class Fachada {
                                                   Path salidaReal, boolean todas, Map<String, SeleccionSpec> selecciones,
                                                   List<RecetasAprendidas.Aplicada> aplicadasOut) {
         Spec spec = l.spec();
+        Spec guardado = specGuardado(salidaReal);
+        AlmacenSpec.heredarComun(spec, guardado);
         List<RecetasAprendidas.Aplicada> aplicadas = List.of();
         boolean alterado = false;
         PerfilProyecto perfil = salidaReal == null ? null : AlmacenPerfil.cargar(salidaReal, p);
@@ -322,6 +376,7 @@ public class Fachada {
             LectorSpec.Lectura otra = leerSpec(specJson, rutaSpec);
             if (otra.ok()) {
                 spec = otra.spec();
+                AlmacenSpec.heredarComun(spec, guardado);
             }
         }
         ResultadoValidacion v = ValidadorSpec.validar(spec, p, salidaReal, todas, selecciones);
@@ -337,6 +392,7 @@ public class Fachada {
         if (!original.ok()) {
             return v;
         }
+        AlmacenSpec.heredarComun(original.spec(), guardado);
         ResultadoValidacion sin = ValidadorSpec.validar(original.spec(), p, salidaReal, todas, selecciones);
         if (sin.valido) {
             sin.avisos.add(ErrorValidacion.aviso("$.servicios", "RECETAS_NO_APLICADAS",
@@ -344,6 +400,248 @@ public class Fachada {
                     null));
         }
         return sin;
+    }
+
+    /** Máximo de argumentos de una invocación real que se interpretan al leer el mensaje de Mockito. */
+    private static final int MAX_ARGUMENTOS_INVOCACION = 20;
+    private static final Pattern INVOCACION = Pattern.compile(
+            "this invocation of '(\\w+)' method:\\s*(?:(\\w+)\\.)?\\w+\\((.*?)\\);", Pattern.DOTALL);
+    /** Matchers de tipo (sin argumentos) → envoltorio para {@code nullable(T.class)}. */
+    private static final Map<String, String> MATCHERS_A_TIPO = Map.ofEntries(Map.entry("anyString", "String"),
+            Map.entry("anyInt", "Integer"), Map.entry("anyLong", "Long"), Map.entry("anyBoolean", "Boolean"),
+            Map.entry("anyDouble", "Double"), Map.entry("anyFloat", "Float"), Map.entry("anyShort", "Short"),
+            Map.entry("anyByte", "Byte"), Map.entry("anyChar", "Character"), Map.entry("anyList", "List"),
+            Map.entry("anyMap", "Map"), Map.entry("anySet", "Set"), Map.entry("anyCollection", "Collection"),
+            Map.entry("anyIterable", "Iterable"));
+
+    /**
+     * Autoarreglo de matchers (R4/R5) sobre el spec de un caso ({@code stubs}, {@code verificaciones} y
+     * {@code construcciones[].stubs}), con la firma real del método del mock: R4 tipa los {@code any()} sin tipo de métodos
+     * sobrecargados o con parámetros primitivos; R5 (Mockito ≥ 2.1) cambia por {@code nullable(T.class)} el matcher de tipo
+     * que el mensaje de Mockito muestra frente a un argumento real null. Modifica {@code specCaso} y devuelve las frases de lo
+     * cambiado. Nunca lanza; sin cambios, lista vacía.
+     */
+    public List<String> tiparMatchers(Path proyecto, Path salida, String fqnServicio, ObjectNode specCaso, ResultadoTest ultimo) {
+        List<String> frases = new ArrayList<>();
+        if (proyecto == null || salida == null || fqnServicio == null || specCaso == null) {
+            return frases;
+        }
+        try {
+            ProyectoEscaneado p = proyecto(proyecto, false);
+            Spec guardado = AlmacenSpec.leer(salida);
+            String moduloSpec = null;
+            List<String> importsSpec = List.of();
+            if (guardado != null && guardado.servicios != null) {
+                for (var sv : guardado.servicios) {
+                    if (sv != null && fqnServicio.equals(sv.clase)) {
+                        moduloSpec = sv.modulo;
+                        importsSpec = sv.imports == null ? List.of() : sv.imports;
+                        break;
+                    }
+                }
+            }
+            List<ProyectoEscaneado.Encontrada> cands = p.resolverServicio(fqnServicio, moduloSpec, null);
+            if (cands.size() != 1 || !cands.get(0).modulo().versiones.mockito) {
+                return frases;
+            }
+            var me = cands.get(0).modulo();
+            var clase = cands.get(0).clase();
+            var an = me.analisis(clase);
+            var politica = NormalizadorMatchers.Politica.de(me.versiones);
+            var resolutor = new com.junitgen.generacion.ResolutorImports(me.indice, clase, importsSpec);
+            java.util.function.Predicate<String> usable = t -> {
+                String simple = com.junitgen.util.Textos.nombreSimple(t);
+                String r = resolutor.resolver(simple);
+                if (!t.contains(".")) {
+                    return r != null;
+                }
+                return (t.startsWith("java.lang.") && t.indexOf('.', "java.lang.".length()) < 0) || t.equals(r);
+            };
+            com.junitgen.escaneo.InfoMetodo probado = metodoDelCaso(clase, specCaso);
+            List<Path> cp = List.of();
+            var prep = com.junitgen.verificacion.PreparadorModulos.vigente(p, salida, me);
+            if (prep != null) {
+                cp = com.junitgen.verificacion.PreparadorModulos.classpathCompilacion(prep, me);
+            }
+            try (com.junitgen.escaneo.FirmasReales firmas = new com.junitgen.escaneo.FirmasReales(me.indice, cp)) {
+                List<ObjectNode> llamadas = new ArrayList<>();
+                nodosConLlamada(specCaso.path("stubs"), llamadas);
+                nodosConLlamada(specCaso.path("verificaciones"), llamadas);
+                for (JsonNode cm : specCaso.path("construcciones")) {
+                    nodosConLlamada(cm.path("stubs"), llamadas);
+                }
+                for (ObjectNode o : llamadas) {
+                    String mock = o.path("mock").asText("");
+                    String llamada = o.get("llamada").asText();
+                    com.junitgen.escaneo.Dependencia d = mock.isEmpty() ? null : an.dependencia(mock);
+                    java.util.Set<String> receptores = d != null ? com.junitgen.escaneo.FirmasReales.receptoresDe(d)
+                            : com.junitgen.escaneo.FirmasReales.receptoresDeDato(clase, tipoDeDato(specCaso, mock));
+                    String tipoMock = d != null ? (d.tipoFqn != null ? d.tipoFqn : d.tipo)
+                            : tipoDeDatoFqn(me.indice, clase, specCaso, mock);
+                    String nueva = NormalizadorMatchers.normalizar(mock, llamada, firmas, clase, probado, tipoMock, receptores,
+                            politica, usable, frases);
+                    if (!nueva.equals(llamada)) {
+                        o.put("llamada", nueva);
+                    }
+                }
+                if (politica.nullable() && ultimo != null) {
+                    nullableFrenteANull(specCaso, ultimo, an, clase, frases);
+                }
+            }
+        } catch (RuntimeException | LinkageError e) {
+            System.err.println("junit-gen: no se pudieron tipar los matchers del caso (" + e.getClass().getSimpleName() + ")");
+            return new ArrayList<>();
+        }
+        return frases;
+    }
+
+    private static void nodosConLlamada(JsonNode lista, List<ObjectNode> destino) {
+        for (JsonNode n : lista) {
+            if (n instanceof ObjectNode o && o.get("llamada") != null && o.get("llamada").isTextual()) {
+                destino.add(o);
+            }
+        }
+    }
+
+    private static String tipoDeDato(ObjectNode specCaso, String mock) {
+        for (JsonNode d : specCaso.path("datos")) {
+            if (mock.equals(d.path("nombre").asText())) {
+                return d.path("tipo").asText(null);
+            }
+        }
+        return null;
+    }
+
+    private static String tipoDeDatoFqn(com.junitgen.escaneo.IndiceTipos idx, InfoClase clase, ObjectNode specCaso, String mock) {
+        String t = tipoDeDato(specCaso, mock);
+        return t == null ? null : idx.resolverFqn(t, clase);
+    }
+
+    /** Método probado del caso: por nombre y, si hay varios, por parámetros o por número de argumentos; null si no es único. */
+    private static com.junitgen.escaneo.InfoMetodo metodoDelCaso(InfoClase clase, ObjectNode specCaso) {
+        String nombre = specCaso.path("metodo").asText("");
+        List<com.junitgen.escaneo.InfoMetodo> mismos = new ArrayList<>();
+        for (com.junitgen.escaneo.InfoMetodo m : clase.metodosNoPrivados()) {
+            if (m.nombre.equals(nombre)) {
+                mismos.add(m);
+            }
+        }
+        if (mismos.size() > 1 && specCaso.path("parametros").isArray()) {
+            List<String> pedidos = new ArrayList<>();
+            specCaso.path("parametros").forEach(x -> pedidos.add(com.junitgen.util.Textos.nombreSimple(x.asText())));
+            mismos.removeIf(m -> !com.junitgen.duplicados.ExtractorHuellasTests.simples(m.tiposParametros()).equals(pedidos));
+        }
+        if (mismos.size() > 1) {
+            int n = specCaso.path("argumentos").size();
+            mismos.removeIf(m -> m.aridad() != n);
+        }
+        return mismos.size() == 1 ? mismos.get(0) : null;
+    }
+
+    /**
+     * R5: del mensaje de Mockito («this invocation of 'm' method: …») toma los argumentos reales de la llamada y, donde el
+     * argumento es exactamente {@code null} y el stub del mismo mock, método y aridad tiene un matcher de tipo, lo cambia por
+     * {@code nullable(T.class)}. No toca {@code eq(..)}, literales ni {@code notNull()}.
+     */
+    private static void nullableFrenteANull(ObjectNode specCaso, ResultadoTest ultimo, com.junitgen.escaneo.AnalisisServicio an,
+                                            InfoClase clase, List<String> frases) {
+        String texto = (ultimo.mensaje == null ? "" : ultimo.mensaje) + "\n" + (ultimo.traza == null ? "" : ultimo.traza);
+        Matcher m = INVOCACION.matcher(texto);
+        if (!m.find()) {
+            return;
+        }
+        String metodo = m.group(1);
+        String receptor = m.group(2);
+        String cuerpo = m.group(3).strip();
+        List<String> reales = new ArrayList<>();
+        if (cuerpo.contains("\n")) {
+            for (String l : cuerpo.split("\\R")) {
+                String x = l.strip();
+                if (x.endsWith(",")) {
+                    x = x.substring(0, x.length() - 1).strip();
+                }
+                if (!x.isEmpty()) {
+                    reales.add(x);
+                }
+            }
+        } else if (!cuerpo.isEmpty()) {
+            reales.addAll(List.of(cuerpo.split(", ")));
+        }
+        if (reales.isEmpty() || reales.size() > MAX_ARGUMENTOS_INVOCACION) {
+            return;
+        }
+        for (JsonNode s : specCaso.path("stubs")) {
+            if (!(s instanceof ObjectNode o) || o.get("llamada") == null || !o.get("llamada").isTextual()) {
+                continue;
+            }
+            String mock = o.path("mock").asText("");
+            com.junitgen.escaneo.Dependencia d = an.dependencia(mock);
+            java.util.Set<String> receptores = d != null ? com.junitgen.escaneo.FirmasReales.receptoresDe(d)
+                    : java.util.Set.of(mock);
+            if (receptor != null && !receptor.equals(mock) && !receptores.contains(receptor)) {
+                continue;
+            }
+            String llamada = o.get("llamada").asText();
+            String nueva = anularMatchers(mock, llamada, metodo, reales, frases);
+            if (nueva != null) {
+                o.put("llamada", nueva);
+            }
+        }
+    }
+
+    /** Llamada con los matchers de tipo cambiados por {@code nullable} donde el argumento real es null; null si no cambia. */
+    private static String anularMatchers(String mock, String llamada, String metodo, List<String> reales, List<String> frases) {
+        var pr = com.junitgen.escaneo.IndiceTipos.parser().parseExpression("x." + llamada.trim());
+        if (!pr.isSuccessful() || pr.getResult().isEmpty()
+                || !(pr.getResult().get() instanceof com.github.javaparser.ast.expr.MethodCallExpr mc)
+                || !mc.getNameAsString().equals(metodo) || mc.getArguments().size() != reales.size()) {
+            return null;
+        }
+        boolean cambia = false;
+        var args = mc.getArguments();
+        for (int i = 0; i < args.size(); i++) {
+            if (!"null".equals(reales.get(i)) || !(args.get(i) instanceof com.github.javaparser.ast.expr.MethodCallExpr a)
+                    || !NormalizadorMatchers.esMatcher(a)) {
+                continue;
+            }
+            String tipo = null;
+            if (a.getArguments().isEmpty() && MATCHERS_A_TIPO.containsKey(a.getNameAsString())) {
+                tipo = MATCHERS_A_TIPO.get(a.getNameAsString());
+            } else if (a.getArguments().size() == 1 && ("any".equals(a.getNameAsString()) || "isA".equals(a.getNameAsString()))
+                    && a.getArgument(0) instanceof com.github.javaparser.ast.expr.ClassExpr ce) {
+                tipo = ce.getType().asString();
+            }
+            if (tipo == null) {
+                continue;
+            }
+            var scope = a.getScope().map(com.github.javaparser.ast.expr.Expression::clone).orElse(null);
+            var nuevo = new com.github.javaparser.ast.expr.MethodCallExpr(scope, "nullable",
+                    new com.github.javaparser.ast.NodeList<>(new com.github.javaparser.ast.expr.ClassExpr(
+                            new com.github.javaparser.ast.type.ClassOrInterfaceType(null, tipo))));
+            frases.add("Se cambió `" + a + "` por `" + nuevo + "` en `" + mock + "." + llamada.trim() + "`: el código llama con "
+                    + "argumento null y un matcher de tipo no acepta null");
+            args.set(i, nuevo);
+            cambia = true;
+        }
+        if (!cambia) {
+            return null;
+        }
+        String t = mc.toString();
+        return t.startsWith("x.") ? t.substring(2) : null;
+    }
+
+    /** spec.json acumulado de la salida para heredar la parte común; null si no hay salida, spec o no se puede leer. */
+    private static Spec specGuardado(Path salidaReal) {
+        if (salidaReal == null) {
+            return null;
+        }
+        try {
+            return AlmacenSpec.leer(salidaReal);
+        } catch (RuntimeException e) {
+            System.err.println("Herencia de la parte común: no se pudo leer el spec.json guardado ("
+                    + e.getClass().getSimpleName() + ")");
+            return null;
+        }
     }
 
     private static String rutaConstruccion(ResultadoValidacion v, String fqn) {

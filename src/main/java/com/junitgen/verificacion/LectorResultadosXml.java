@@ -40,7 +40,7 @@ public final class LectorResultadosXml {
                         t.mensaje = problema.getAttribute("message");
                         t.traza = ClasificadorFallos.traza(problema.getTextContent());
                         t.causa = ClasificadorFallos.causa(problema.getTextContent());
-                        t.estado = ClasificadorFallos.clasificar(f != null ? "failure" : "error", t.tipoError);
+                        t.estado = ClasificadorFallos.clasificar(f != null ? "failure" : "error", t.tipoError, t.mensaje);
                         if ((t.mensaje == null || t.mensaje.isEmpty()) && t.traza != null) {
                             t.mensaje = t.traza.split("\\R")[0];
                         }

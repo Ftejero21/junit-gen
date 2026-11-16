@@ -8,6 +8,8 @@ import com.junitgen.util.Json;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -45,6 +47,15 @@ public final class RutasPorDefecto {
             System.err.println("Ruta por defecto guardada no válida para " + proyectoReal + ": " + e.getMessage());
             return null;
         }
+    }
+
+    /** Claves (proyectos) guardadas, sin validar; vacío si no hay preferencias o el archivo no es válido. */
+    public synchronized List<String> proyectos() {
+        List<String> r = new ArrayList<>();
+        if (preferencias != null) {
+            leer().path("rutas").fieldNames().forEachRemaining(r::add);
+        }
+        return r;
     }
 
     /** Guarda (relee antes de escribir para no perder otras entradas). Lanza si no se puede. */

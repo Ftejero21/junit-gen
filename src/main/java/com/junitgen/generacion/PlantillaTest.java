@@ -189,8 +189,9 @@ public class PlantillaTest {
         String nombre = nombreMetodo(c, ocupados);
         List<String> l = new ArrayList<>();
         l.add(p.junit == 5 ? "@Test" : "@Test");
-        if (p.displayName && c.descripcion != null && !c.descripcion.isBlank()) {
-            l.add("@DisplayName(" + Textos.literalJava(Textos.sanearDescripcion(c.descripcion)) + ")");
+        String nombreMostrado = c.descripcion != null && !c.descripcion.isBlank() ? c.descripcion : c.queComprueba;
+        if (p.displayName && nombreMostrado != null && !nombreMostrado.isBlank()) {
+            l.add("@DisplayName(" + Textos.literalJava(Textos.sanearDescripcion(nombreMostrado)) + ")");
             imports.add("org.junit.jupiter.api.DisplayName");
         }
         l.add((p.junit == 4 || p.clasePublica ? "public " : "") + "void " + nombre + "() throws Exception {");

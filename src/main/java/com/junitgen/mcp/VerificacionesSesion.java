@@ -1,5 +1,6 @@
 package com.junitgen.mcp;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.junitgen.util.LimitesRespuesta;
 import com.junitgen.util.Textos;
 import com.junitgen.verificacion.ClasificadorFallos;
@@ -71,8 +72,18 @@ final class VerificacionesSesion {
     record Revision(String fqn, List<String> ids) {
     }
 
+    /**
+     * Punto de restauración de una corrección de la parte común (servicio) hecha con arreglar_caso: archivo de test y
+     * entrada del servicio en spec.json antes del cambio, casos corregidos y estados previos de los casos del servicio.
+     */
+    record PuntoComun(Path archivoTest, String textoPrevio, ObjectNode servicioPrevio, Set<String> idsCorreccion,
+                      Map<String, String> estadosPrevios) {
+    }
+
     /** Estado de las verificaciones de una carpeta de salida (protegido por {@link #monitor}). */
     private static final class EstadoVerificaciones {
+        /** FQN → punto de restauración de la corrección común pendiente de verificar. */
+        final Map<String, PuntoComun> puntosComun = new HashMap<>();
         final Path salida;
         final LinkedHashSet<String> cola = new LinkedHashSet<>();
         final Map<String, Path> proyectos = new HashMap<>();
@@ -106,6 +117,19 @@ final class VerificacionesSesion {
 
         boolean inactiva() {
             return cola.isEmpty() && enCurso == null;
+        }
+
+        /** Sin ámbito (null), como {@link #inactiva()}; con ámbito, ningún servicio del ámbito está en cola ni en curso. */
+        boolean inactiva(Set<String> ambito) {
+            if (ambito == null) {
+                return inactiva();
+            }
+            for (String fqn : cola) {
+                if (ambito.contains(fqn)) {
+                    return false;
+                }
+            }
+            return enCurso == null || !ambito.contains(enCurso);
         }
     }
 
@@ -206,6 +230,17 @@ final class VerificacionesSesion {
         }
     }
 
+    /** Fija el punto de restauración de la corrección común de {@code fqn}, que se evaluará en su próxima verificación. */
+    void fijarPuntoComun(Path salida, String fqn, PuntoComun p) {
+        if (salida == null || fqn == null || fqn.isBlank() || p == null || cerrado) {
+            return;
+        }
+        synchronized (monitor) {
+            EstadoVerificaciones e = estados.computeIfAbsent(clave(salida), x -> new EstadoVerificaciones(salida));
+            e.puntosComun.put(fqn, p);
+        }
+    }
+
     /** Lanza un trabajo que procesará el siguiente servicio de la cola de la salida (con el monitor tomado). */
     private void enviar(String k) {
         try {
@@ -276,6 +311,24 @@ final class VerificacionesSesion {
             for (ResultadoTest t : rv.resultados) {
                 if (t.caso != null && propios.contains(t.caso) && t.estado != null) {
                     estadosCaso.put(t.caso, t.estado);
+                }
+            }
+            PuntoComun punto;
+            synchronized (monitor) {
+                punto = e.puntosComun.remove(fqn);
+            }
+            if (alFinal && punto != null && proyecto != null) {
+                String motivoComun = ArreglosFinal.rompeComun(punto, rv, propios);
+                if (motivoComun != null && ArreglosFinal.deshacerComun(sesion, proyecto, salida, fqn, punto, motivoComun)) {
+                    synchronized (monitor) {
+                        e.contar.remove(fqn);
+                        e.intentados.remove(fqn);
+                        e.reintentos.remove(fqn);
+                        if (e.cola.add(fqn)) {
+                            enviar(k);
+                        }
+                    }
+                    return;
                 }
             }
             sesion.registrarEstados(salida, estadosCaso);
@@ -378,11 +431,15 @@ final class VerificacionesSesion {
 
     // ------------------------------------------------------------- consultas
 
-    /** true si la salida no tiene nada en cola ni en curso. */
+    /**
+     * true si la salida no tiene nada en cola ni en curso; en una llamada con bloque, si ningún servicio del bloque está en
+     * cola ni en curso.
+     */
     boolean inactiva(Path salida) {
+        Set<String> ambito = sesion.ambitoLlamada();
         synchronized (monitor) {
             EstadoVerificaciones e = estado(salida);
-            return e == null || e.inactiva();
+            return e == null || e.inactiva(ambito);
         }
     }
 
@@ -400,24 +457,30 @@ final class VerificacionesSesion {
      */
     boolean esperarInactiva(Path salida, Duration max) {
         long limite = System.nanoTime() + Math.max(0, max == null ? 0 : max.toNanos());
-        synchronized (monitor) {
-            while (true) {
-                EstadoVerificaciones e = estado(salida);
-                if (e == null || e.inactiva()) {
-                    return true;
-                }
-                long resto = TimeUnit.NANOSECONDS.toMillis(limite - System.nanoTime());
-                if (resto <= 0 || sesion.llamadaCancelada() || cerrado) {
-                    return false;
-                }
-                try {
-                    monitor.wait(Math.min(SONDEO_MS, resto));
-                } catch (InterruptedException ex) {
-                    Thread.currentThread().interrupt();
-                    return false;
+        // El ámbito se calcula antes de tomar el monitor (toma el monitor de la tanda).
+        Set<String> ambito = sesion.ambitoLlamada();
+        // Mientras espera, la llamada suelta el cerrojo de sesión para que otros bloques sigan; nunca se readquiere con
+        // el monitor tomado (el cerrojo se recupera al salir del bloque sincronizado).
+        return sesion.sinCerrojo(() -> {
+            synchronized (monitor) {
+                while (true) {
+                    EstadoVerificaciones e = estado(salida);
+                    if (e == null || e.inactiva(ambito)) {
+                        return true;
+                    }
+                    long resto = TimeUnit.NANOSECONDS.toMillis(limite - System.nanoTime());
+                    if (resto <= 0 || sesion.llamadaCancelada() || cerrado) {
+                        return false;
+                    }
+                    try {
+                        monitor.wait(Math.min(SONDEO_MS, resto));
+                    } catch (InterruptedException ex) {
+                        Thread.currentThread().interrupt();
+                        return false;
+                    }
                 }
             }
-        }
+        });
     }
 
     /** Progreso: servicios con casos en la sesión, verificados (todos sus casos con estado), en curso y en cola. */

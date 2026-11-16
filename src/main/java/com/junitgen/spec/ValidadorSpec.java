@@ -20,6 +20,7 @@ import com.junitgen.duplicados.Huella;
 import com.junitgen.duplicados.NormalizadorExpresiones;
 import com.junitgen.escaneo.AnalisisServicio;
 import com.junitgen.escaneo.Dependencia;
+import com.junitgen.escaneo.FirmasReales;
 import com.junitgen.escaneo.IndiceTipos;
 import com.junitgen.escaneo.InfoClase;
 import com.junitgen.escaneo.InfoMetodo;
@@ -86,10 +87,31 @@ public final class ValidadorSpec {
     private final Set<String> idsPrevios = new LinkedHashSet<>();
     /** FQN → nombre de método → ids no eliminados del spec.json de la salida. */
     private final Map<String, Map<String, List<String>>> previosPorMetodo = new java.util.HashMap<>();
+    /** FQN → nombre de método → primer {@code queHaceOriginal} no vacío de los casos no eliminados de la salida. */
+    private final Map<String, Map<String, String>> queHacePrevio = new java.util.HashMap<>();
     /** FQN → selección de la sesión MCP (ia/usuario); null = modo CLI (la selección llega en el spec). */
     private final Map<String, SeleccionSpec> seleccionesSesion;
     /** Catálogo de clases por módulo (por identidad), creado al validar el primer import o tipo del módulo. */
     private final Map<ModuloEscaneado, CatalogoClases> catalogos = new IdentityHashMap<>();
+    /** Firmas reales por módulo (por identidad), creadas al normalizar el primer matcher; se cierran al terminar de validar. */
+    private final Map<ModuloEscaneado, FirmasReales> firmas = new IdentityHashMap<>();
+    /** Proyecto que se valida (para la preparación vigente de cada módulo). */
+    private ProyectoEscaneado proyectoActual;
+    /** Servicio que se valida ahora (null fuera de {@code validarServicio}). */
+    private ResultadoValidacion.ServicioValidado svActual;
+    /** Llamadas de stubs y verificaciones cuyos matchers se normalizaron en el servicio actual, con un ejemplo. */
+    private int matchersNormalizados;
+    private String ejemploAntes;
+    private String ejemploDespues;
+    /** Comprobación de identificadores no declarados en el caso (activa solo tras procesar sus datos y preparación). */
+    private boolean libresActivo;
+    private Set<String> reservadosActuales = Set.of();
+    /** false si el servicio es una copia ampliada de un test del usuario o importa estáticos con comodín. */
+    private boolean comprobarIdentificadores = true;
+    /** Nombre de variable → tipo declarado (datos del caso, parámetros de fixture) para comprobar sus métodos. */
+    private final Map<String, String> tiposDeclarados = new java.util.HashMap<>();
+    /** Métodos del test que una llamada sin ámbito puede invocar (fixtures e importaciones estáticas). */
+    private Set<String> ignorarMetodos = Set.of();
     /** FQN → selección tal cual está en el spec.json de la salida (cualquier origen). */
     private final Map<String, SeleccionSpec> seleccionesCrudas = new java.util.HashMap<>();
     /** FQN → selección de origen ia del spec.json de la salida. */
@@ -124,17 +146,28 @@ public final class ValidadorSpec {
     public static ResultadoValidacion validar(Spec spec, ProyectoEscaneado proyecto, Path salida, boolean todas,
                                               Map<String, SeleccionSpec> seleccionesSesion) {
         ValidadorSpec v = new ValidadorSpec(salida, todas, seleccionesSesion);
-        v.res.spec = spec;
-        v.res.proyecto = proyecto;
-        v.ejecutar(spec, proyecto);
-        if (v.res.errores.isEmpty()) {
-            DetectorDuplicados.detectar(v.res, salida);
+        try {
+            v.res.spec = spec;
+            v.res.proyecto = proyecto;
+            v.ejecutar(spec, proyecto);
             if (v.res.errores.isEmpty()) {
-                v.comprobarMaximos();
+                DetectorDuplicados.detectar(v.res, salida);
+                if (v.res.errores.isEmpty()) {
+                    v.comprobarMaximos();
+                }
             }
+            v.res.valido = v.res.errores.isEmpty();
+            return v.res;
+        } finally {
+            v.cerrarFirmas();
         }
-        v.res.valido = v.res.errores.isEmpty();
-        return v.res;
+    }
+
+    private void cerrarFirmas() {
+        for (FirmasReales f : firmas.values()) {
+            f.close();
+        }
+        firmas.clear();
     }
 
     /** Casos no eliminados del spec.json de la salida; ausente o corrupto → vacío. */
@@ -168,6 +201,10 @@ public final class ValidadorSpec {
                 if (c.metodo != null) {
                     previosPorMetodo.computeIfAbsent(s.clase, k -> new LinkedHashMap<>())
                             .computeIfAbsent(c.metodo, k -> new ArrayList<>()).add(c.id);
+                    if (c.queHaceOriginal != null && !c.queHaceOriginal.isBlank()) {
+                        queHacePrevio.computeIfAbsent(s.clase, k -> new java.util.HashMap<>())
+                                .putIfAbsent(c.metodo, c.queHaceOriginal);
+                    }
                 }
             }
         }
@@ -235,6 +272,7 @@ public final class ValidadorSpec {
     }
 
     private void ejecutar(Spec spec, ProyectoEscaneado proyecto) {
+        proyectoActual = proyecto;
         if (spec.version == null || spec.version != 1) {
             res.error("$.version", "VERSION", "La versión del spec debe ser 1.", "Añade \"version\": 1.");
         }
@@ -266,6 +304,12 @@ public final class ValidadorSpec {
 
     private void validarServicio(ServicioSpec s, int i, String ruta, ProyectoEscaneado proyecto, String moduloSpec,
                                  EstiloSpec estiloSpec, Set<String> ids) {
+        svActual = null;
+        libresActivo = false;
+        matchersNormalizados = 0;
+        ejemploAntes = null;
+        ejemploDespues = null;
+        tiposDeclarados.clear();
         if (s.clase == null || s.clase.isBlank()) {
             res.error(ruta + ".clase", "FALTA_CLASE", "Falta la clase del servicio (FQN).", "Usa el FQN que devuelve escanear_proyecto.");
             return;
@@ -300,6 +344,7 @@ public final class ValidadorSpec {
         sv.analisis = an;
         sv.estilo = resolverEstilo(estiloSpec, me);
         sv.seleccion = seleccionDe(s, ruta, me, clase);
+        svActual = sv;
         tiposUsados = new LinkedHashSet<>();
         variables = new LinkedHashSet<>();
 
@@ -370,9 +415,14 @@ public final class ValidadorSpec {
         }
         variables.addAll(sv.reales.keySet());
         variables.add(sv.estilo.nombreCampoSut);
+        comprobarIdentificadores = !sv.copiaAmpliada && !importaEstaticosConComodin(s, clase);
+        ignorarMetodos = metodosDelTest(s, clase);
         // Construcción: valores o instancias reales para dependencias y campos.
         for (String clave : argumentosValidos) {
-            expresion(argumentos.get(clave), ruta + ".construccion.argumentos." + clave, true);
+            Expression ex = expresion(argumentos.get(clave), ruta + ".construccion.argumentos." + clave, true);
+            if (ex != null && comprobarIdentificadores) {
+                identificadoresDeArgumento(ex, ruta + ".construccion.argumentos." + clave, s);
+            }
         }
         validarMontaje(s.construccion, ruta + ".construccion", an, mocks, sv, profundosDeArgumentos);
         for (Dependencia d : an.dependencias) {
@@ -457,7 +507,84 @@ public final class ValidadorSpec {
                 sv.imports.put(t, fqn);
             }
         }
+        if (matchersNormalizados > 0) {
+            res.aviso(ruta, "MATCHERS_NORMALIZADOS", "Se normalizaron los matchers de " + matchersNormalizados
+                    + (matchersNormalizados == 1 ? " llamada" : " llamadas") + " de stubs/verificaciones (p. ej. `" + ejemploAntes
+                    + "` → `" + ejemploDespues + "`): valores mezclados con matchers → eq(valor); any() sin tipo en parámetros "
+                    + "primitivos o en métodos sobrecargados → matcher del tipo real.",
+                    "Ya aplicado: no hace falta repetirlo. Copia las llamadas de stubsTipicos[].stub (firma real).");
+        }
+        svActual = null;
         res.servicios.add(sv);
+    }
+
+    /** true si el servicio (spec o código fuente) importa miembros estáticos con comodín: no se sabe qué nombres aporta. */
+    private static boolean importaEstaticosConComodin(ServicioSpec s, InfoClase clase) {
+        if (s.imports != null) {
+            for (String imp : s.imports) {
+                if (imp != null && imp.trim().startsWith("static") && imp.trim().endsWith(".*")) {
+                    return true;
+                }
+            }
+        }
+        for (String imp : clase.importsEstaticos) {
+            if (imp != null && imp.endsWith(".*")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Nombres de métodos que una llamada sin ámbito puede invocar en el test: fixtures e importaciones estáticas. */
+    private static Set<String> metodosDelTest(ServicioSpec s, InfoClase clase) {
+        Set<String> r = new LinkedHashSet<>();
+        if (s.fixtures != null) {
+            for (FixtureSpec f : s.fixtures) {
+                if (f != null && f.nombre != null) {
+                    r.add(f.nombre);
+                }
+            }
+        }
+        List<String> estaticos = new ArrayList<>(clase.importsEstaticos);
+        if (s.imports != null) {
+            for (String imp : s.imports) {
+                if (imp != null && imp.trim().startsWith("static")) {
+                    estaticos.add(imp.trim().substring("static".length()).trim());
+                }
+            }
+        }
+        for (String imp : estaticos) {
+            if (imp != null) {
+                r.add(imp.substring(imp.lastIndexOf('.') + 1));
+            }
+        }
+        return r;
+    }
+
+    /** Identificadores no declarados en una expresión de construccion.argumentos (se evalúa antes de datos/preparacion). */
+    private void identificadoresDeArgumento(Expression ex, String ruta, ServicioSpec s) {
+        Set<String> conocidos = new LinkedHashSet<>(variables);
+        Set<String> mocksDeDatos = new LinkedHashSet<>();
+        if (s.casos != null) {
+            for (CasoSpec c : s.casos) {
+                if (c != null && c.datos != null) {
+                    for (DatoSpec d : c.datos) {
+                        if (d != null && Boolean.TRUE.equals(d.mock) && d.nombre != null) {
+                            mocksDeDatos.add(d.nombre);
+                        }
+                    }
+                }
+            }
+        }
+        for (String libre : ComprobadorReferencias.libres(ex, conocidos)) {
+            String extra = mocksDeDatos.contains(libre)
+                    ? " `" + libre + "` es un dato mock de un caso: quita la clave de construccion.argumentos para que vuelva a ser @Mock."
+                    : "";
+            res.error(ruta, "IDENTIFICADOR_NO_DECLARADO", "`" + libre + "` no está declarado: construccion.argumentos se ejecuta en "
+                    + "el montaje común, antes de `datos`/`preparacion` de cualquier caso." + extra,
+                    "Usa una expresión autónoma (`new T()`, un literal, una fixture) o un mock del servicio. Disponibles: "
+                            + new TreeSet<>(variables) + ".");
+        }
     }
 
     private static String prefijo(String paquete) {
@@ -643,6 +770,7 @@ public final class ValidadorSpec {
         }
         tipo(f.tipo, ruta + ".tipo");
         Set<String> previas = new LinkedHashSet<>(variables);
+        Map<String, String> tiposPrevios = new java.util.HashMap<>(tiposDeclarados);
         if (f.parametros != null) {
             Set<String> ps = new LinkedHashSet<>();
             for (int p = 0; p < f.parametros.size(); p++) {
@@ -656,6 +784,9 @@ public final class ValidadorSpec {
                     res.error(ruta + ".parametros[" + p + "].nombre", "NOMBRE_INVALIDO", "Nombre de parámetro no válido o repetido: " + ps0.nombre, null);
                 }
                 variables.add(ps0.nombre);
+                if (ps0.nombre != null && ps0.tipo != null && !"var".equals(ps0.tipo.trim())) {
+                    tiposDeclarados.put(ps0.nombre, ps0.tipo.trim());
+                }
             }
         }
         if (f.pasos != null) {
@@ -670,6 +801,8 @@ public final class ValidadorSpec {
         }
         variables.clear();
         variables.addAll(previas);
+        tiposDeclarados.clear();
+        tiposDeclarados.putAll(tiposPrevios);
     }
 
     /**
@@ -737,10 +870,19 @@ public final class ValidadorSpec {
                                 + ". Para cambiarlas: seleccionar_funciones (CLI: campo `seleccion`). Solo el usuario puede pedir `todas`.");
             }
         }
+        if (c.queHaceOriginal == null || c.queHaceOriginal.isBlank()) {
+            Map<String, String> deClase = queHacePrevio.get(sv.clase.fqn);
+            String previo = deClase == null ? null : deClase.get(m.nombre);
+            if (previo != null) {
+                c.queHaceOriginal = previo;
+            }
+        }
         if (nuevo && (c.queHaceOriginal == null || c.queHaceOriginal.isBlank() || c.queComprueba == null
                 || c.queComprueba.isBlank())) {
-            res.error(ruta, "FALTA_COMENTARIO", "Falta 'queHaceOriginal' o 'queComprueba' en el caso " + c.id + ".",
-                    "Añade ambos: qué hace la función original y qué comprueba este test (1 frase cada uno, máx. 160 caracteres).");
+            res.error(ruta, "FALTA_COMENTARIO", "Falta 'queHaceOriginal' (basta en el primer caso de cada función) o "
+                            + "'queComprueba' en el caso " + c.id + ".",
+                    "Añade queHaceOriginal (qué hace la función, 1 frase) en el primer caso de cada función y queComprueba "
+                            + "(qué comprueba este test, 1 frase) en todos; máx. 160 caracteres.");
         }
         c.queHaceOriginal = normalizarComentario(c.queHaceOriginal, ruta + ".queHaceOriginal");
         c.queComprueba = normalizarComentario(c.queComprueba, ruta + ".queComprueba");
@@ -758,6 +900,13 @@ public final class ValidadorSpec {
         return san;
     }
 
+    /** El método admite {@code n} argumentos (varargs: al menos los parámetros fijos). */
+    private static boolean aridadCompatible(InfoMetodo m, int n) {
+        int p = m.aridad();
+        boolean varargs = p > 0 && m.parametros.get(p - 1).tipo().endsWith("...");
+        return varargs ? n >= p - 1 : n == p;
+    }
+
     private ResultadoValidacion.CasoValidado validarCaso(CasoSpec c, int indice, String ruta,
                                                          ResultadoValidacion.ServicioValidado sv, Set<String> ids) {
         InfoClase clase = sv.clase;
@@ -766,7 +915,8 @@ public final class ValidadorSpec {
         cv.spec = c;
         cv.indice = indice;
         if (c.id == null || !Textos.ID_CASO.matcher(c.id).matches()) {
-            res.error(ruta + ".id", "ID_INVALIDO", "id no válido: " + c.id, "Minúsculas, dígitos, '-' o '_', máx. 64. Ej.: accept-usuario-distinto");
+            res.error(ruta + ".id", "ID_INVALIDO", "id no válido: " + c.id, "Minúsculas, dígitos, '-' o '_', máx. 64. Ej.: accept-usuario-distinto"
+                    + ", o quita `id`: junit-gen lo deduce de metodo+escenario");
         } else if (!ids.add(c.id)) {
             res.error(ruta + ".id", "ID_DUPLICADO", "id repetido en el spec: " + c.id, "Cada caso necesita un id único.");
         }
@@ -801,6 +951,19 @@ public final class ValidadorSpec {
                 return null;
             }
         }
+        if (c.parametros == null && mismos.size() > 1) {
+            // Sin 'parametros': la aridad de los argumentos del caso suele bastar para elegir la sobrecarga.
+            int n = c.argumentos == null ? 0 : c.argumentos.size();
+            List<InfoMetodo> porAridad = new ArrayList<>();
+            for (InfoMetodo m : mismos) {
+                if (aridadCompatible(m, n)) {
+                    porAridad.add(m);
+                }
+            }
+            if (porAridad.size() == 1) {
+                mismos = porAridad;
+            }
+        }
         if (mismos.size() > 1) {
             res.error(ruta + ".parametros", "SOBRECARGA_AMBIGUA", c.metodo + " tiene varias sobrecargas.",
                     "Indica \"parametros\" con los tipos: " + mismos.stream().map(InfoMetodo::clave).toList());
@@ -833,6 +996,11 @@ public final class ValidadorSpec {
                 sv.estilo.nombreCampoSut));
         reservados.addAll(mocksCaso);
         reservados.addAll(sv.reales.keySet());
+        libresActivo = false;
+        tiposDeclarados.clear();
+        if (comprobarIdentificadores) {
+            renombrarInstancia(c, sv, reservados, ruta);
+        }
         Set<String> datosCaso = new LinkedHashSet<>();
         if (c.datos != null) {
             for (int k = 0; k < c.datos.size(); k++) {
@@ -864,6 +1032,9 @@ public final class ValidadorSpec {
                     res.error(rd + ".tipo", "VAR_NO_SOPORTADO", "'var' requiere Java 10 (proyecto: Java " + java + ").", "Usa el tipo explícito.");
                 }
                 variables.add(d.nombre);
+                if (d.nombre != null && d.tipo != null && !"var".equals(d.tipo.trim())) {
+                    tiposDeclarados.put(d.nombre, d.tipo.trim());
+                }
             }
         }
         if (c.preparacion != null) {
@@ -871,10 +1042,18 @@ public final class ValidadorSpec {
             for (int k = 0; k < c.preparacion.size(); k++) {
                 Statement st = sentencia(c.preparacion.get(k), ruta + ".preparacion[" + k + "]");
                 if (st != null) {
-                    st.findAll(VariableDeclarator.class).forEach(v -> variables.add(v.getNameAsString()));
+                    st.findAll(VariableDeclarator.class).forEach(v -> {
+                        variables.add(v.getNameAsString());
+                        if (!v.getType().isVarType()) {
+                            tiposDeclarados.put(v.getNameAsString(), v.getType().asString());
+                        }
+                    });
                 }
             }
         }
+        // Desde aquí, un identificador en minúscula que no sea una variable del caso, un mock ni una variable reservada es un error.
+        libresActivo = true;
+        reservadosActuales = reservados;
         // Stubs
         if (c.stubs != null) {
             for (int k = 0; k < c.stubs.size(); k++) {
@@ -886,10 +1065,10 @@ public final class ValidadorSpec {
                 }
                 if (st.mock == null || !mocksCaso.contains(st.mock)) {
                     res.error(rs + ".mock", "MOCK_DESCONOCIDO", "'" + st.mock + "' no es un mock de este caso.",
-                            "Mocks disponibles: " + mocksCaso);
+                            sugerenciaMockDesconocido(st.mock, an, sv, "Mocks disponibles: " + mocksCaso));
                     continue;
                 }
-                String forma = validarStub(st, rs, st.mock, tipoMock(st.mock, an, c));
+                String forma = validarStub(st, rs, st.mock, tipoMock(st.mock, an, c), m, receptoresDeMock(st.mock, an, c, clase));
                 if (forma != null) {
                     cv.formaStub.put(k, forma);
                 }
@@ -949,7 +1128,7 @@ public final class ValidadorSpec {
                             continue;
                         }
                         String fq = validarStub(st, rc + ".stubs[" + q + "]", "construido",
-                                idx.resolverFqn(cm.clase, clase));
+                                idx.resolverFqn(cm.clase, clase), m, Set.of());
                         if (fq != null) {
                             formas.put(q, fq);
                         }
@@ -1038,7 +1217,8 @@ public final class ValidadorSpec {
                     continue;
                 }
                 if (v.mock == null || !mocksCaso.contains(v.mock)) {
-                    res.error(rv + ".mock", "MOCK_DESCONOCIDO", "'" + v.mock + "' no es un mock de este caso.", "Mocks: " + mocksCaso);
+                    res.error(rv + ".mock", "MOCK_DESCONOCIDO", "'" + v.mock + "' no es un mock de este caso.",
+                            sugerenciaMockDesconocido(v.mock, an, sv, "Mocks: " + mocksCaso));
                     continue;
                 }
                 if (Boolean.TRUE.equals(v.sinInteracciones)) {
@@ -1046,6 +1226,10 @@ public final class ValidadorSpec {
                 }
                 if (v.veces != null && v.veces < 0) {
                     res.error(rv + ".veces", "VECES_INVALIDO", "veces debe ser ≥ 0.", null);
+                }
+                if (v.llamada != null && !sv.profundos.contains(v.mock)) {
+                    v.llamada = normalizarLlamada(v.mock, v.llamada, tipoMock(v.mock, an, c), m,
+                            receptoresDeMock(v.mock, an, c, clase));
                 }
                 llamadaSobreMock(v.mock, v.llamada, rv + ".llamada", sv.profundos.contains(v.mock));
             }
@@ -1055,9 +1239,232 @@ public final class ValidadorSpec {
             cv.tipoResultado = tipoResultado(m, clase, sv);
         }
         cv.huella = huella(c, m, sv, mocksCaso);
+        libresActivo = false;
+        tiposDeclarados.clear();
         variables.clear();
         variables.addAll(previas);
         return cv;
+    }
+
+    // ------------------------------------------------------------- alias de la instancia bajo prueba
+
+    /** Nombres con los que la IA suele llamar a la instancia bajo prueba. */
+    private static final List<String> ALIAS_INSTANCIA = List.of("sut", "service", "servicio", "instance", "instancia", "target",
+            "underTest", "objectUnderTest", "cut", "testee", "subject");
+    private static final String SUFIJO_IMPL = "Impl";
+
+    /**
+     * Renombra al nombre real de la instancia bajo prueba los alias habituales ({@code sut}, {@code service}…) que el caso
+     * usa sin declararlos, con aviso INSTANCIA_RENOMBRADA. Por AST, en todos los campos con código del caso.
+     */
+    private void renombrarInstancia(CasoSpec c, ResultadoValidacion.ServicioValidado sv, Set<String> reservados, String ruta) {
+        String real = sv.estilo.nombreCampoSut;
+        Set<String> declarados = new LinkedHashSet<>(variables);
+        declarados.addAll(reservados);
+        if (c.datos != null) {
+            for (DatoSpec d : c.datos) {
+                if (d != null && d.nombre != null) {
+                    declarados.add(d.nombre);
+                }
+            }
+        }
+        if (c.preparacion != null) {
+            for (String p : c.preparacion) {
+                String envuelto = "{" + (p == null ? "" : p) + "\n}";
+                ParseResult<BlockStmt> r = IndiceTipos.parser().parseBlock(envuelto);
+                if (r.isSuccessful() && r.getResult().isPresent()) {
+                    r.getResult().get().findAll(VariableDeclarator.class).forEach(v -> declarados.add(v.getNameAsString()));
+                }
+            }
+        }
+        List<String> alias = new ArrayList<>(ALIAS_INSTANCIA);
+        String simple = sv.clase.simple;
+        if (!simple.isEmpty()) {
+            String minuscula = Character.toLowerCase(simple.charAt(0)) + simple.substring(1);
+            alias.add(minuscula);
+            if (minuscula.endsWith(SUFIJO_IMPL) && minuscula.length() > SUFIJO_IMPL.length()) {
+                alias.add(minuscula.substring(0, minuscula.length() - SUFIJO_IMPL.length()));
+            }
+        }
+        for (String a : new LinkedHashSet<>(alias)) {
+            if (a.equals(real) || declarados.contains(a)) {
+                continue;
+            }
+            int[] cambios = {0};
+            java.util.function.UnaryOperator<String> ren = t -> {
+                String n = ComprobadorReferencias.renombrar(t, a, real);
+                if (n == null) {
+                    return t;
+                }
+                cambios[0]++;
+                return n;
+            };
+            aplicarATextos(c, ren);
+            if (cambios[0] > 0) {
+                res.aviso(ruta, "INSTANCIA_RENOMBRADA", "`" + a + "` no existe: la instancia bajo prueba se llama `" + real
+                        + "`; se ha renombrado en este caso.", "Usa `" + real + "` (montaje.instancia del paquete de trabajo).");
+            }
+        }
+    }
+
+    /** Aplica {@code f} a cada texto con código del caso (los sustituye por el resultado). */
+    private static void aplicarATextos(CasoSpec c, java.util.function.UnaryOperator<String> f) {
+        if (c.datos != null) {
+            for (DatoSpec d : c.datos) {
+                if (d != null && d.valor != null) {
+                    d.valor = f.apply(d.valor);
+                }
+            }
+        }
+        mapear(c.preparacion, f);
+        if (c.stubs != null) {
+            for (StubSpec s : c.stubs) {
+                aplicarAStub(s, f);
+            }
+        }
+        if (c.estaticos != null) {
+            for (EstaticoSpec e : c.estaticos) {
+                if (e != null) {
+                    e.llamada = e.llamada == null ? null : f.apply(e.llamada);
+                    e.devuelve = e.devuelve == null ? null : f.apply(e.devuelve);
+                    e.lanza = e.lanza == null ? null : f.apply(e.lanza);
+                }
+            }
+        }
+        if (c.construcciones != null) {
+            for (ConstruccionMockSpec cm : c.construcciones) {
+                if (cm != null && cm.stubs != null) {
+                    cm.stubs.forEach(s -> aplicarAStub(s, f));
+                }
+            }
+        }
+        mapear(c.argumentos, f);
+        if (c.aserciones != null) {
+            for (AsercionSpec a : c.aserciones) {
+                if (a != null) {
+                    a.real = a.real == null ? null : f.apply(a.real);
+                    a.esperado = a.esperado == null ? null : f.apply(a.esperado);
+                }
+            }
+        }
+        if (c.verificaciones != null) {
+            for (VerificacionSpec v : c.verificaciones) {
+                if (v != null && v.llamada != null) {
+                    v.llamada = f.apply(v.llamada);
+                }
+            }
+        }
+        if (c.esperado != null && c.esperado.valor != null) {
+            c.esperado.valor = f.apply(c.esperado.valor);
+        }
+    }
+
+    private static void aplicarAStub(StubSpec s, java.util.function.UnaryOperator<String> f) {
+        if (s == null) {
+            return;
+        }
+        s.llamada = s.llamada == null ? null : f.apply(s.llamada);
+        s.devuelve = s.devuelve == null ? null : f.apply(s.devuelve);
+        s.lanza = s.lanza == null ? null : f.apply(s.lanza);
+        s.responde = s.responde == null ? null : f.apply(s.responde);
+        mapear(s.devuelveSecuencia, f);
+    }
+
+    private static void mapear(List<String> l, java.util.function.UnaryOperator<String> f) {
+        if (l == null) {
+            return;
+        }
+        l.replaceAll(t -> t == null ? null : f.apply(t));
+    }
+
+    // ------------------------------------------------------------- matchers (normalización previa a generar)
+
+    /** Receptores con los que el servicio llama al mock: dependencia (nombre y campo) o el único campo del mismo tipo. */
+    private Set<String> receptoresDeMock(String mock, AnalisisServicio an, CasoSpec c, InfoClase clase) {
+        Dependencia d = an.dependencia(mock);
+        if (d != null) {
+            return FirmasReales.receptoresDe(d);
+        }
+        if (c.datos != null) {
+            for (DatoSpec x : c.datos) {
+                if (x != null && mock != null && mock.equals(x.nombre)) {
+                    return FirmasReales.receptoresDeDato(clase, x.tipo);
+                }
+            }
+        }
+        return Set.of();
+    }
+
+    /**
+     * Llamada con los matchers normalizados (valores mezclados → eq, any() primitivo o sobrecargado → tipado); la misma si no
+     * hay Mockito o nada cambia. Cuenta los cambios para el aviso MATCHERS_NORMALIZADOS del servicio.
+     */
+    private String normalizarLlamada(String mock, String llamada, String tipoFqn, InfoMetodo probado, Set<String> receptores) {
+        if (llamada == null || svActual == null || !svActual.modulo.versiones.mockito) {
+            return llamada;
+        }
+        try {
+            ModuloEscaneado me = svActual.modulo;
+            String nueva = NormalizadorMatchers.normalizar(mock, llamada, firmas(me), svActual.clase, probado, tipoFqn,
+                    receptores, NormalizadorMatchers.Politica.de(me.versiones), tipoUsable(svActual), new ArrayList<>());
+            if (nueva != null && !nueva.equals(llamada)) {
+                matchersNormalizados++;
+                if (ejemploAntes == null) {
+                    ejemploAntes = llamada;
+                    ejemploDespues = nueva;
+                }
+                return nueva;
+            }
+        } catch (RuntimeException | LinkageError e) {
+            System.err.println("junit-gen: no se pudieron normalizar los matchers (" + e.getClass().getSimpleName() + ")");
+        }
+        return llamada;
+    }
+
+    /** Firmas reales del módulo, con el classpath de la preparación vigente de la salida (sin ella, sin reflexión). */
+    private FirmasReales firmas(ModuloEscaneado me) {
+        return firmas.computeIfAbsent(me, m -> {
+            List<Path> cp = List.of();
+            try {
+                PreparadorModulos.Preparacion prep = salida == null || proyectoActual == null ? null
+                        : PreparadorModulos.vigente(proyectoActual, salida, m);
+                if (prep != null) {
+                    cp = PreparadorModulos.classpathCompilacion(prep, m);
+                }
+            } catch (RuntimeException e) {
+                System.err.println("junit-gen: no se pudo leer el classpath de las firmas (" + e.getClass().getSimpleName() + ")");
+            }
+            return new FirmasReales(m.indice, cp);
+        });
+    }
+
+    /**
+     * Decide si un tipo puede escribirse en el test: java.lang, o ya resoluble con los imports del servicio, o con FQN conocido
+     * sin choque de nombre simple (entonces se añade a {@code imports}, como IMPORT_DEDUCIDO).
+     */
+    private java.util.function.Predicate<String> tipoUsable(ResultadoValidacion.ServicioValidado sv) {
+        return t -> {
+            String simple = Textos.nombreSimple(t);
+            ServicioSpec s = sv.spec;
+            String r = new ResolutorImports(sv.modulo.indice, sv.clase, s.imports).resolver(simple);
+            if (!t.contains(".")) {
+                return r != null;
+            }
+            if (t.startsWith("java.lang.") && t.indexOf('.', "java.lang.".length()) < 0) {
+                return true;
+            }
+            if (t.equals(r)) {
+                return true;
+            }
+            if (r != null) {
+                return r.isEmpty() && t.equals(prefijo(sv.clase.paquete) + simple);
+            }
+            s.imports = s.imports == null ? new ArrayList<>() : new ArrayList<>(s.imports);
+            if (!s.imports.contains(t)) {
+                s.imports.add(t);
+            }
+            return true;
+        };
     }
 
     private String tipoResultado(InfoMetodo m, InfoClase clase, ResultadoValidacion.ServicioValidado sv) {
@@ -1208,6 +1615,61 @@ public final class ValidadorSpec {
         return l;
     }
 
+    /**
+     * Sugerencia de {@code MOCK_DESCONOCIDO}: el prefijo actual y, si el nombre es una dependencia que junit-gen anuncia como mock
+     * pero el spec la ha dejado de tratar como tal, por qué y qué escribir. Nunca lanza; sin datos devuelve el prefijo.
+     */
+    private String sugerenciaMockDesconocido(String nombre, AnalisisServicio an, ResultadoValidacion.ServicioValidado sv, String prefijo) {
+        try {
+            if (nombre == null || an == null || sv == null) {
+                return prefijo;
+            }
+            Dependencia d = an.dependencia(nombre);
+            if (d == null || !d.esMockDeclarado() || sv.esMock(d)) {
+                return prefijo;
+            }
+            if (sv.reales.containsKey(d.nombre)) {
+                return prefijo + ". `" + d.nombre + "` es una instancia real (construccion.argumentos." + d.nombre
+                        + "): no admite stubs; prepara ese objeto real o quita la clave para que vuelva a ser @Mock.";
+            }
+            List<String> reales = new ArrayList<>();
+            if (d.derivaDe != null) {
+                for (String x : d.derivaDe) {
+                    if (sv.reales.containsKey(x)) {
+                        reales.add("`" + x + "`");
+                    }
+                }
+            }
+            if (reales.isEmpty()) {
+                return prefijo;
+            }
+            String campo = d.campo != null ? d.campo : d.nombre;
+            String mockDato = campo + "Mock";
+            StringBuilder sb = new StringBuilder(prefijo);
+            sb.append(". El constructor calcula `").append(campo).append("` a partir de ")
+                    .append(String.join(", ", reales)).append(": al ir real en construccion.argumentos, `").append(d.nombre)
+                    .append("` no es un @Mock, y no se sustituye encadenando stubs sobre las otras dependencias porque el servicio ya lo ")
+                    .append("guardó al construirse. Declara en `datos` {tipo: \"").append(d.tipo).append("\", nombre: \"")
+                    .append(mockDato).append("\", mock: true}, ");
+            String nombreSut = sv.estilo != null ? sv.estilo.nombreCampoSut : null;
+            if (d.heredadoDe == null && d.campo != null && nombreSut != null && sv.clase != null && sv.clase.simple != null) {
+                String f = "f" + Character.toUpperCase(campo.charAt(0)) + campo.substring(1);
+                sb.append("añade en `preparacion` las sentencias `java.lang.reflect.Field ").append(f).append(" = ")
+                        .append(sv.clase.simple).append(".class.getDeclaredField(\"").append(campo).append("\")`, `").append(f)
+                        .append(".setAccessible(true)` y `").append(f).append(".set(").append(nombreSut).append(", ")
+                        .append(mockDato).append(")`");
+            } else {
+                sb.append("asígnalo por reflexión en `preparacion` al campo del servicio donde se guarda");
+            }
+            sb.append(" y usa `mock: \"").append(mockDato).append("\"` en los stubs.");
+            return sb.toString();
+        } catch (RuntimeException e) {
+            System.err.println("junit-gen: no se pudo calcular la sugerencia de MOCK_DESCONOCIDO: " + e.getClass().getSimpleName()
+                    + ": " + e.getMessage());
+            return prefijo;
+        }
+    }
+
     private String tipoMock(String nombre, AnalisisServicio an, CasoSpec c) {
         Dependencia d = an.dependencia(nombre);
         if (d != null) {
@@ -1224,8 +1686,11 @@ public final class ValidadorSpec {
     }
 
     /** Valida un stub y devuelve la forma resuelta ("when" o "do"). */
-    private String validarStub(StubSpec st, String ruta, String mock, String tipoFqn) {
+    private String validarStub(StubSpec st, String ruta, String mock, String tipoFqn, InfoMetodo probado, Set<String> receptores) {
         boolean permiteCadena = profundosActuales.contains(mock);
+        if (st.llamada != null && !permiteCadena) {
+            st.llamada = normalizarLlamada(mock, st.llamada, tipoFqn, probado, receptores);
+        }
         MethodCallExpr llamada = llamadaSobreMock(mock, st.llamada, ruta + ".llamada", permiteCadena);
         if (llamada != null && !(llamada.getScope().orElse(null) instanceof NameExpr)) {
             tipoFqn = null; // llamada encadenada: el tipo del receptor no se conoce sin symbol solver
@@ -1528,7 +1993,8 @@ public final class ValidadorSpec {
                     continue;
                 }
                 Dependencia d = an.dependencia(st.mock);
-                String forma = validarStub(st, rs, st.mock, d.tipoFqn != null ? d.tipoFqn : d.tipo);
+                String forma = validarStub(st, rs, st.mock, d.tipoFqn != null ? d.tipoFqn : d.tipo, null,
+                        FirmasReales.receptoresDe(d));
                 if (forma != null) {
                     sv.formaStubMontaje.put(k, forma);
                 }
@@ -1574,7 +2040,39 @@ public final class ValidadorSpec {
         Expression e = r.getResult().get();
         compat(e, ruta);
         tiposUsados.addAll(ResolutorImports.tiposUsados(e, variables));
+        comprobarReferencias(e, ruta);
         return e;
+    }
+
+    /**
+     * Comprobaciones previas con la corrección exacta: métodos inexistentes en tipos del proyecto, accesos a miembros privados
+     * y, dentro de un caso, identificadores no declarados. Nunca lanza: ante un fallo interno no da ningún error.
+     */
+    private void comprobarReferencias(Node n, String ruta) {
+        if (svActual == null || idx == null) {
+            return;
+        }
+        try {
+            for (ComprobadorReferencias.Hallazgo h : ComprobadorReferencias.metodos(n, tiposDeclarados, ignorarMetodos,
+                    svActual.clase, idx)) {
+                res.error(ruta, h.codigo(), h.mensaje(), h.sugerencia());
+            }
+            for (ComprobadorReferencias.Hallazgo h : ComprobadorReferencias.privados(n, svActual.estilo.nombreCampoSut,
+                    svActual.clase, idx)) {
+                res.error(ruta, h.codigo(), h.mensaje(), h.sugerencia());
+            }
+            if (libresActivo && comprobarIdentificadores) {
+                Set<String> conocidos = new LinkedHashSet<>(variables);
+                conocidos.addAll(reservadosActuales);
+                for (String libre : ComprobadorReferencias.libres(n, conocidos)) {
+                    res.error(ruta, "IDENTIFICADOR_NO_DECLARADO", "`" + libre + "` no está declarado en este caso.",
+                            "Decláralo en `datos` o en `preparacion` (variables disponibles: " + new TreeSet<>(variables)
+                                    + "). La instancia bajo prueba se llama `" + svActual.estilo.nombreCampoSut + "`.");
+                }
+            }
+        } catch (RuntimeException e) {
+            System.err.println("junit-gen: no se pudieron comprobar las referencias de una expresión (" + e.getClass().getSimpleName() + ")");
+        }
     }
 
     private Statement sentencia(String texto, String ruta) {
@@ -1597,6 +2095,7 @@ public final class ValidadorSpec {
         }
         compat(st, ruta);
         tiposUsados.addAll(ResolutorImports.tiposUsados(st, variables));
+        comprobarReferencias(st, ruta);
         return st;
     }
 

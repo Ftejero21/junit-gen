@@ -45,32 +45,23 @@ public class HerramientaSeleccionar implements Herramienta {
 
     @Override
     public String descripcion() {
-        return "Paso obligatorio por servicio antes de generar_tests (salvo `todas`, funciones nombradas por el usuario o "
-                + "selección «IA (guardada)»). Sin 'funciones' devuelve las «Funciones candidatas» del servicio (solo lectura, sin "
-                + "cuerpos, paginadas con 'pagina'): por cada función no trivial, clave → retorno, puntuación orientativa p "
-                + "(complejidad propia + privados que usa), escribe (altas/bajas/modificaciones), tx, excepciones que lanza, privados "
-                + "que usa y tests existentes; más el cupo (mínimo–máximo). Con 'funciones' registra TU elección por importancia de "
-                + "negocio: prioriza lo que más daño haría si fallara (escribe, lanza, permisos, cálculos) y deja fuera consultas "
-                + "simples y variantes redundantes; motivo de 1 frase por función; toda función con escribe que dejes fuera va en "
-                + "'omitidas' con motivo. junit-gen valida (FUNCION_DESCONOCIDA, FUNCION_TRIVIAL, FALTA_MOTIVO, EXCESO_SELECCION, "
-                + "SELECCION_INSUFICIENTE, FALTA_MOTIVO_OMISION…), guarda la selección para la sesión y recalcula el plan del "
-                + "servicio; corrige y repite hasta que no devuelva errores. La respuesta trae ya el paquete de trabajo del "
-                + "servicio (funciones elegidas con su cuerpo, métodos de la clase que llaman, tipos, helpers externos y montaje): "
-                + "después llama a generar_tests; detalle_servicio solo si paginacion.siguiente no es null. No escribe archivos. "
-                + "Si el usuario nombró las funciones (escanear_proyecto 'funciones'), no la llames.";
+        return "Paso obligatorio por servicio antes de generar_tests (salvo `todas`, funciones nombradas por el usuario o selección "
+                + "guardada). Sin 'funciones' lista las candidatas (puntuación, escribe, tx, excepciones, cupo). Con 'funciones' "
+                + "registra TU elección por importancia de negocio (lo que más daño haría si fallara; motivo de 1 frase; toda "
+                + "función con escribe que omitas va en 'omitidas' con motivo). Corrige y repite si hay errores. La respuesta trae "
+                + "el paquete de trabajo: sigue con generar_tests. Sigue accionRequerida.";
     }
 
     @Override
     public ObjectNode esquema() {
         ObjectNode s = Herramienta.esquemaBase();
         ObjectNode props = (ObjectNode) s.get("properties");
-        Herramienta.propiedad(s, "clase", "string", "FQN del servicio o nombre simple (como en detalle_servicio).", true);
-        entradas(props, "funciones", "Funciones elegidas por importancia de negocio: {nombre, motivo}. nombre = nombre del método "
-                + "(cubre todas sus sobrecargas) o clave nombre(Tipos). Sin 'funciones', devuelve las candidatas.");
-        entradas(props, "omitidas", "Funciones que dejas fuera con su motivo; obligatorio para las que escriben datos (escribe).");
+        Herramienta.propiedad(s, "clase", "string", "FQN o nombre simple del servicio.", true);
+        entradas(props, "funciones", "Elegidas por importancia de negocio: {nombre, motivo}. Sin ellas, devuelve las candidatas.");
+        entradas(props, "omitidas", "Funciones que dejas fuera con motivo; obligatorio si escriben datos (escribe).");
         Herramienta.propiedad(s, "pagina", "integer", "Página de las candidatas (desde 1).", false);
         ((ObjectNode) props.get("pagina")).put("minimum", 1);
-        Herramienta.propiedad(s, "ruta", "string", "Ruta del proyecto (por defecto, la del último escaneo o la carpeta abierta en el IDE).", false);
+        Herramienta.propiedad(s, "ruta", "string", "Ruta del proyecto; por defecto, la del último escaneo.", false);
         Herramienta.propiedad(s, "modulo", "string", "Módulo, si la clase existe en varios.", false);
         return s;
     }
@@ -169,6 +160,40 @@ public class HerramientaSeleccionar implements Herramienta {
         return sb.append('\n').append(actualMd).toString();
     }
 
+    /** Resultado de registrar una elección: la validación y, si es válida, la selección efectiva y sus objetivos. */
+    private record Registro(SeleccionFunciones.Eleccion eleccion, SeleccionFunciones seleccion,
+                            List<PlanGeneracion.Objetivo> objetivos) {
+    }
+
+    /**
+     * Valida la elección {@code propuesta} del servicio (mismas reglas de siempre) y, si es válida, la guarda en la sesión
+     * ({@code fijarSeleccion}) y recalcula el plan del servicio ({@code reemplazarPlanServicio}) cuando está en el plan.
+     * La usan seleccionar_funciones y generar_tests (selección dentro del spec).
+     */
+    static SeleccionFunciones.Eleccion registrarEleccion(SesionMcp sesion, Path base, Path salida, ModuloEscaneado me, InfoClase c,
+                                                         SeleccionSpec propuesta) {
+        return registrar(sesion, base, salida, me, c, propuesta).eleccion();
+    }
+
+    private static Registro registrar(SesionMcp sesion, Path base, Path salida, ModuloEscaneado me, InfoClase c,
+                                      SeleccionSpec propuesta) {
+        SeleccionFunciones.Eleccion el = SeleccionFunciones.validarEleccion(me, c, propuesta);
+        if (!el.valida()) {
+            return new Registro(el, null, List.of());
+        }
+        sesion.fijarSeleccion(base, c.fqn, el.normalizada());
+        SeleccionFunciones sel = SeleccionFunciones.de(me, c, false, el.normalizada());
+        List<PlanGeneracion.Objetivo> objetivos = PlanGeneracion.objetivosDe(me, c, salida, sel);
+        if (sesion.enPlan(base, c.fqn)) {
+            List<SesionMcp.MetodoPlan> metodos = new ArrayList<>();
+            for (PlanGeneracion.Objetivo o : objetivos) {
+                metodos.add(new SesionMcp.MetodoPlan(o.servicio.fqn, o.metodo.nombre, o.casos, o.conTests));
+            }
+            sesion.reemplazarPlanServicio(base, c.fqn, metodos);
+        }
+        return new Registro(el, sel, objetivos);
+    }
+
     /** Modo elección: valida (origen ia), guarda en la sesión y recalcula el plan del servicio. */
     private static Resultado eleccion(JsonNode args, SesionMcp sesion, Path base, Path ruta, Path salida, ModuloEscaneado me,
                                       InfoClase c) {
@@ -184,21 +209,14 @@ public class HerramientaSeleccionar implements Herramienta {
         propuesta.funciones = leerEntradas(args.get("funciones"));
         JsonNode om = args.get("omitidas");
         propuesta.omitidas = om == null || om.isNull() ? null : leerEntradas(om);
-        SeleccionFunciones.Eleccion el = SeleccionFunciones.validarEleccion(me, c, propuesta);
+        Registro reg = registrar(sesion, base, salida, me, c, propuesta);
+        SeleccionFunciones.Eleccion el = reg.eleccion();
         if (!el.valida()) {
             return errores(el.errores(), ref);
         }
-        sesion.fijarSeleccion(base, c.fqn, el.normalizada());
-        SeleccionFunciones sel = SeleccionFunciones.de(me, c, false, el.normalizada());
-        List<PlanGeneracion.Objetivo> objetivos = PlanGeneracion.objetivosDe(me, c, salida, sel);
+        SeleccionFunciones sel = reg.seleccion();
+        List<PlanGeneracion.Objetivo> objetivos = reg.objetivos();
         boolean enPlan = sesion.enPlan(base, c.fqn);
-        if (enPlan) {
-            List<SesionMcp.MetodoPlan> metodos = new ArrayList<>();
-            for (PlanGeneracion.Objetivo o : objetivos) {
-                metodos.add(new SesionMcp.MetodoPlan(o.servicio.fqn, o.metodo.nombre, o.casos, o.conTests));
-            }
-            sesion.reemplazarPlanServicio(base, c.fqn, metodos);
-        }
         Map<InfoMetodo, Integer> casosPorMetodo = new LinkedHashMap<>();
         for (PlanGeneracion.Objetivo o : objetivos) {
             casosPorMetodo.merge(o.metodo, o.casos, Integer::sum);

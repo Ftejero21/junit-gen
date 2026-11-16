@@ -47,6 +47,23 @@ public final class LectorSpec {
         }
     }
 
+    /** Como {@link #leerArchivo(Path)} para un spec escrito por la IA: si es válido, lo completa ({@link CompletadorSpec}). */
+    public static Lectura leerArchivoEntrada(Path archivo) {
+        return completada(leerArchivo(archivo));
+    }
+
+    /** Como {@link #leer(JsonNode)} para un spec escrito por la IA: si es válido, lo completa ({@link CompletadorSpec}). */
+    public static Lectura leerEntrada(JsonNode n) {
+        return completada(leer(n));
+    }
+
+    private static Lectura completada(Lectura l) {
+        if (l.ok()) {
+            CompletadorSpec.completar(l.spec());
+        }
+        return l;
+    }
+
     public static Lectura leerTexto(String texto) {
         List<ErrorValidacion> errores = new ArrayList<>();
         if (texto == null || texto.isBlank()) {

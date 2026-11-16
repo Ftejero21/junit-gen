@@ -71,51 +71,28 @@ public class HerramientaEjecutar implements Herramienta {
 
     @Override
     public String descripcion() {
-        return "Cierra la tanda de tests generados EN ESTA SESIÓN: generar_tests ya los va probando en segundo plano, servicio a "
-                + "servicio, dentro de <salida>/.junit-gen-tmp (JDK del proyecto, classpath en modo lectura con pom espejo / Gradle; "
-                + "no modifica el proyecto). Llámala sin argumentos solo cuando plan.restantes = 0 (nunca entre servicios): espera "
-                + "a las pruebas pendientes como máximo " + ESPERA_CIERRE.toSeconds() + " s; si aún no han terminado devuelve "
-                + "verificando=true con progreso y debes volver a llamarla sin argumentos (no generes nada más ni des el mensaje "
-                + "final). Si hay casos apuntados que fallaron durante la tanda abre la fase de arreglo: junit-gen corrige solo lo "
-                + "mecánico y devuelve los casos fallidos del siguiente servicio (con su error, pistas, spec y código; accionRequerida "
-                + "«Fase de arreglo: casos k–j de M…», o «caso k de M» si es uno solo): corrígelos en una llamada a arreglar_caso (o "
-                + "registrar_analisis_ia con bug_servicio si es un bug real del código); llámala también para recibir los "
-                + "siguientes. Nunca preguntes al usuario (no uses ask_user). Rechaza sin ejecutar nada si en esta sesión no se ha "
-                + "generado ningún caso, si el plan está incompleto (salvo parcial=true, solo si el USUARIO pidió ejecutar ya lo "
-                + "generado) o si carpetaTests no es la carpeta de salida de esta sesión. Devuelve "
-                + "resumenSesion (cifras de control), respuestaFinal (markdown final exacto: tu último mensaje al usuario es EXACTAMENTE ese texto, tal cual, sin añadir, quitar ni cambiar nada; solo viene cuando no queda nada que corregir: si falta, NO has terminado, sigue accionRequerida, que va como primera clave, y vuelve a llamar) y por test: pasa, fallo_asercion, "
-                + "error_montaje o no_compila, con deEstaSesion, más montajeReintentables / asercionesPendientes / revisionIaPendiente. "
-                + "Si hay más resultados, paginaResultados=2.. devuelve las páginas siguientes de la última ejecución sin volver a "
-                + "ejecutar. 'todos=true' (solo si el usuario pidió verificar tests de sesiones anteriores) verifica toda la carpeta; "
-                + "esos resultados llevan deEstaSesion=false y no cuentan. 'casos' limita a esos ids de esta sesión (solo para "
-                + "reejecutar a petición del usuario; tras corregir con reemplazarCasos los casos se vuelven a probar solos y las "
-                + "reejecuciones de montaje van sin 'casos'). Solo con `fallosAsercion: preguntar` en junit-gen.yml hace una única "
-                + "pregunta para todos los fallos de aserción: [" + BUG + "] [" + AJUSTAR + "] [" + ELIMINAR + "] [" + REVISAR_IA
-                + "] [" + REVISAR_EN_CHAT + "]. Nunca incluyas un caso con fallo de aserción en reemplazarCasos/eliminarCasos sin "
-                + "haber registrado antes su veredicto error_ia con registrar_analisis_ia: generar_tests lo rechaza. "
-                + "Ejecuta sin preguntar si probar; solo con `verificacion: preguntar` "
-                + "en junit-gen.yml, si [Probar tests] [Descartar] quedó sin responder vuelve a preguntarlo y sin respuesta no "
-                + "ejecuta (ejecutado=false + respuestaFinal). Si la llamada termina con error de tiempo del cliente, "
-                + "paginaResultados=1 devuelve los resultados de esa ejecución sin repetirla.";
+        return "Cierra la tanda: generar_tests ya prueba los tests en segundo plano (fuera del proyecto, que no se modifica). "
+                + "Llámala sin argumentos solo cuando plan.restantes = 0 (espera hasta " + ESPERA_CIERRE.toSeconds() + " s; si "
+                + "devuelve verificando=true, repítela). Si hay casos que fallaron abre la fase de arreglo: corrígelos con "
+                + "arreglar_caso (o registrar_analisis_ia con bug_servicio si es un bug real). Nunca preguntes al usuario. Termina "
+                + "con respuestaFinal: tu último mensaje es exactamente ese texto; si falta, no has terminado. En paralelo, cada "
+                + "trabajador la llama con `bloque` y responde «BLOQUE K TERMINADO». Sigue accionRequerida. `todos`, `casos` y "
+                + "`parcial` solo si el usuario lo pide.";
     }
 
     @Override
     public ObjectNode esquema() {
         ObjectNode s = Herramienta.esquemaBase();
-        Herramienta.propiedad(s, "rutaProyecto", "string", "Ruta del proyecto analizado (por defecto, el de la sesión; no hace falta).", false);
-        Herramienta.propiedad(s, "carpetaTests", "string", "No la pases: junit-gen usa la carpeta de salida de esta sesión. Si apunta a "
-                + "otra carpeta (p. ej. de una sesión anterior) se rechaza.", false);
+        Herramienta.propiedad(s, "rutaProyecto", "string", "Ruta del proyecto; por defecto, la de la sesión.", false);
+        Herramienta.propiedad(s, "carpetaTests", "string", "No la pases: se usa la carpeta de salida de la sesión.", false);
         Herramienta.propiedad(s, "modulo", "string", "Solo este módulo.", false);
-        Herramienta.propiedad(s, "clases", "array", "Solo estas clases de test o servicios (filtro adicional).", false);
-        Herramienta.propiedad(s, "todos", "boolean", "Solo si el usuario pidió verificar también tests de sesiones anteriores: verifica "
-                + "toda la carpeta de salida; esos resultados llevan deEstaSesion=false y no cuentan en resumenSesion.", false);
-        Herramienta.propiedad(s, "casos", "array", "Solo estos ids de caso de esta sesión: fuerza su reejecución en segundo plano "
-                + "(solo si el usuario lo pide o, con `fallosAsercion: preguntar`, para repetir la pregunta de aserciones sin "
-                + "responder). Sin `casos` se cierra la tanda entera.", false);
-        Herramienta.propiedad(s, "parcial", "boolean", "Ejecutar con el plan incompleto: SOLO si el usuario lo pidió expresamente; no lo "
-                + "decidas tú. Se recuerda el resto de la sesión.", false);
-        Herramienta.propiedad(s, "paginaResultados", "integer", "Página (1..) de los resultados de la última ejecución de esta sesión; "
-                + "no vuelve a ejecutar (1 sirve para recuperarlos si la llamada anterior terminó con error de tiempo).", false);
+        Herramienta.propiedad(s, "clases", "array", "Solo estas clases de test o servicios.", false);
+        Herramienta.propiedad(s, "todos", "boolean", "Solo si el usuario pidió verificar también tests de sesiones anteriores.", false);
+        Herramienta.propiedad(s, "casos", "array", "Solo estos ids de caso: fuerza su reejecución; solo si el usuario lo pide.", false);
+        Herramienta.propiedad(s, "parcial", "boolean", "Ejecutar con el plan incompleto: solo si el usuario lo pidió expresamente.", false);
+        Herramienta.propiedad(s, "paginaResultados", "integer", "Página (1..) de los resultados de la última ejecución; no reejecuta.", false);
+        Herramienta.propiedad(s, "bloque", "integer", "Solo en paralelo: id del bloque que cierras; responde «BLOQUE K TERMINADO».", false);
+        ((ObjectNode) s.get("properties").get("bloque")).put("minimum", 1);
         return s;
     }
 
@@ -147,6 +124,10 @@ public class HerramientaEjecutar implements Herramienta {
         if (paginaResultados >= 1) {
             return paginaCache(sesion, proyecto, salidaSesion, paginaResultados);
         }
+        Integer bloque = BloquesTanda.bloqueArg(args);
+        if (bloque != null) {
+            return ejecutarBloque(sesion, proyecto, salidaSesion, bloque);
+        }
         // ---- Puertas: se evalúan antes de cualquier efecto (ni salida recordada, ni decisión, ni temporal).
         Path carpetaArg = Herramienta.ruta(args, "carpetaTests");
         if (carpetaArg != null && salidaSesion != null) {
@@ -159,6 +140,15 @@ public class HerramientaEjecutar implements Herramienta {
         }
         boolean todos = Herramienta.bool(args, "todos");
         boolean parcial = Herramienta.bool(args, "parcial");
+        if (!todos && !parcial && BloquesTanda.activo(sesion, proyecto)) {
+            List<Integer> sinGenerar = BloquesTanda.sinGenerar(sesion, proyecto);
+            if (!sinGenerar.isEmpty()) {
+                return rechazo(sesion, proyecto, salidaSesion, "ejecutar_tests no ha ejecutado nada: bloques sin generar: "
+                        + BloquesTanda.listaIds(sinGenerar) + ". Lanza (o relanza) un subagente por cada uno con el promptTrabajador "
+                        + "(cambia <K> por el bloque) o haz tú cada bloque con tomar_bloque {bloque: K, instrucciones: true} y sigue sus "
+                        + "instrucciones; cuando estén todos generados vuelve a llamar a ejecutar_tests {}.");
+            }
+        }
         SesionMcp.ProgresoPlan pp = sesion.progresoPlan(proyecto);
         List<String> deSesion = salidaSesion == null ? List.of() : sesion.casosDeSesion(salidaSesion);
         if (pp != null) {
@@ -272,10 +262,100 @@ public class HerramientaEjecutar implements Herramienta {
     /** Espera máxima a las verificaciones en segundo plano dentro de una llamada a ejecutar_tests. */
     static final Duration ESPERA_CIERRE = Duration.ofSeconds(60);
 
-    /** Lo que queda de {@link #ESPERA_CIERRE} en la llamada en curso (nunca negativo). */
+    /** Espera máxima a las verificaciones de un bloque dentro de una llamada con bloque (hay otros bloques en la cola). */
+    static final Duration ESPERA_BLOQUE = Duration.ofSeconds(120);
+
+    /** Lo que queda de {@link #ESPERA_CIERRE} (o, con bloque, de {@link #ESPERA_BLOQUE}) en la llamada en curso (nunca negativo). */
     static Duration restoEspera(SesionMcp sesion) {
-        Duration resto = ESPERA_CIERRE.minus(sesion.transcurridoLlamada());
+        Duration total = sesion.bloqueLlamada() != null ? ESPERA_BLOQUE : ESPERA_CIERRE;
+        Duration resto = total.minus(sesion.transcurridoLlamada());
         return resto.isNegative() ? Duration.ZERO : resto;
+    }
+
+    /**
+     * Cierre de un bloque (ejecutar_tests {bloque}): con todos sus servicios generados, encola y espera las pruebas de sus
+     * servicios; si quedan casos por arreglar entrega el siguiente grupo de un servicio del bloque; si no, el bloque queda
+     * terminado (nunca hay respuestaFinal: la da el agente principal con ejecutar_tests {}).
+     */
+    private static Resultado ejecutarBloque(SesionMcp sesion, Path proyecto, Path salida, int bloque) {
+        Tanda t = sesion.tanda(proyecto);
+        if (!BloquesTanda.activo(t)) {
+            throw new IllegalArgumentException("'bloque' solo vale en una tanda en paralelo (escanear_proyecto con paralelo: true) de "
+                    + "este proceso de junit-gen.");
+        }
+        if (BloquesTanda.de(t, bloque) == null) {
+            throw new IllegalArgumentException(BloquesTanda.errorBloqueInexistente(t, bloque));
+        }
+        sesion.fijarBloqueLlamada(bloque);
+        if (salida == null) {
+            throw new IllegalArgumentException("No hay carpeta de salida en esta sesión: la tanda en paralelo la necesita.");
+        }
+        if (BloquesTanda.terminado(sesion, proyecto, bloque)) {
+            return new Resultado(Json.compacto(BloquesTanda.nodoTerminado(sesion, proyecto, salida, bloque, null)), false);
+        }
+        SesionMcp.ProgresoPlan pp = sesion.progresoPlan(proyecto);
+        if (pp == null || pp.restantes() > 0) {
+            return rechazo(sesion, proyecto, salida, "ejecutar_tests {bloque: " + bloque + "} no ha ejecutado nada: al bloque le faltan "
+                    + "casos por generar. " + (pp == null ? "" : pendientesPlan(sesion, proyecto, pp) + " ")
+                    + GuiaTanda.pasoServicio(sesion, proyecto, salida, null, null));
+        }
+        if (sesion.decisionVerificacion() == null) {
+            sesion.fijarDecisionVerificacion(HerramientaGenerar.DECISION_PROBAR);
+        }
+        Set<String> servicios = BloquesTanda.serviciosDe(t, bloque);
+        VerificacionesSesion ver = sesion.verificaciones();
+        ver.encolarPendientes(proyecto, salida, serviciosSinEstado(sesion, salida, servicios));
+        if (!ver.esperarInactiva(salida, restoEspera(sesion))) {
+            return verificandoBloque(sesion, salida);
+        }
+        // Un solo reintento por bloque: los servicios que quedaron con casos sin estado se vuelven a verificar antes de cerrar.
+        Set<String> reintento = serviciosSinEstado(sesion, salida, servicios);
+        if (!reintento.isEmpty() && sesion.contarSinCorregir("reverificar-bloque|" + bloque, 0) == 1) {
+            ver.encolar(proyecto, salida, reintento);
+            if (!ver.esperarInactiva(salida, restoEspera(sesion))) {
+                return verificandoBloque(sesion, salida);
+            }
+        }
+        if (GuiaTanda.arreglosAlFinal(sesion, proyecto)) {
+            for (String fqn : servicios) {
+                ArreglosFinal.sincronizar(sesion, proyecto, salida, fqn);
+            }
+            ObjectNode carga = ArreglosFinal.respuesta(sesion, proyecto, salida, null);
+            if (carga != null) {
+                sesion.guardarTanda(proyecto, salida, Boolean.FALSE);
+                return new Resultado(Json.compacto(carga), false);
+            }
+        }
+        ObjectNode fin = BloquesTanda.nodoTerminado(sesion, proyecto, salida, bloque, null);
+        sesion.guardarTanda(proyecto, salida, Boolean.FALSE);
+        return new Resultado(Json.compacto(fin), false);
+    }
+
+    /** FQN de los servicios dados con algún caso generado sin estado de verificación. */
+    private static Set<String> serviciosSinEstado(SesionMcp sesion, Path salida, Set<String> servicios) {
+        Map<String, String> estados = sesion.estadosDeSesion(salida);
+        Set<String> sinEstado = new LinkedHashSet<>();
+        sesion.serviciosDeCasos(salida).forEach((id, fqn) -> {
+            if (fqn != null && servicios.contains(fqn) && !estados.containsKey(id)) {
+                sinEstado.add(fqn);
+            }
+        });
+        return sinEstado;
+    }
+
+    /** Las pruebas de los servicios del bloque siguen en marcha: hay que volver a llamar con el mismo bloque. */
+    private static Resultado verificandoBloque(SesionMcp sesion, Path salida) {
+        VerificacionesSesion.Progreso p = sesion.verificaciones().progreso(salida);
+        ObjectNode r = Json.objeto();
+        r.put("accionRequerida", ACCION_PENDIENTE_IA + "Las pruebas de tu bloque no han terminado (" + p.verificados() + " de "
+                + p.total() + " servicios con tests verificados). Llama OTRA VEZ a " + BloquesTanda.llamadaEjecutar(sesion)
+                + " (cada llamada espera hasta " + ESPERA_BLOQUE.toSeconds() + " s). No generes nada más.");
+        r.put("verificando", true);
+        ObjectNode pg = r.putObject("progreso");
+        pg.put("serviciosConTests", p.total());
+        pg.put("verificados", p.verificados());
+        pg.put("enCola", p.enCola());
+        return new Resultado(Json.compacto(r), false);
     }
 
     /**
@@ -466,6 +546,10 @@ public class HerramientaEjecutar implements Herramienta {
     static Paso pasoDetallado(SesionMcp sesion, Path proyecto, Path salida, boolean trasCierre) {
         boolean probar = HerramientaGenerar.DECISION_PROBAR.equals(sesion.decisionVerificacion());
         boolean alFinal = GuiaTanda.arreglosAlFinal(sesion, proyecto);
+        Integer bloque = sesion.bloqueLlamada();
+        if (bloque != null && sesion.ambito(proyecto) != null) {
+            return pasoBloque(sesion, proyecto, salida, bloque, probar && alFinal);
+        }
         if (salida != null && probar && !alFinal) {
             List<VerificacionesSesion.Correccion> cs = sesion.verificaciones().correcciones(salida);
             if (!cs.isEmpty()) {
@@ -539,6 +623,36 @@ public class HerramientaEjecutar implements Herramienta {
             }
         }
         return null;
+    }
+
+    /**
+     * Siguiente paso de un trabajador de bloque: PLAN si quedan casos de su bloque; si el bloque no está terminado, ARREGLO
+     * (casos del bloque por arreglar con las pruebas ya hechas) o CIERRE ({@code ejecutar_tests {bloque}}); terminado → null.
+     */
+    private static Paso pasoBloque(SesionMcp sesion, Path proyecto, Path salida, int bloque, boolean probarAlFinal) {
+        SesionMcp.ProgresoPlan pp = sesion.progresoPlan(proyecto);
+        if (pp != null && pp.restantes() > 0 && !sesion.ejecucionParcialAutorizada()) {
+            return new Paso(TipoPaso.PLAN, "quedan " + pp.restantes() + (pp.restantes() == 1 ? " caso del plan (" : " casos del plan (")
+                    + GuiaTanda.posicion(sesion, proyecto) + "): " + GuiaTanda.pasoServicio(sesion, proyecto, salida, null, null),
+                    HerramientaGenerar.siguienteServicio(sesion, proyecto), List.of());
+        }
+        if (BloquesTanda.terminado(sesion, proyecto, bloque) || salida == null || !probarAlFinal) {
+            return null;
+        }
+        String llamada = BloquesTanda.llamadaEjecutar(sesion);
+        List<Tanda.ArregloTanda> pendientes = sesion.arreglosPendientes(proyecto);
+        if (!pendientes.isEmpty() && sesion.verificaciones().inactiva(salida)) {
+            List<String> ids = new ArrayList<>();
+            for (Tanda.ArregloTanda a : pendientes) {
+                ids.add(a.caso);
+            }
+            int n = ids.size();
+            return new Paso(TipoPaso.ARREGLO, "fase de arreglo: " + (n == 1 ? "queda 1 caso" : "quedan " + n + " casos")
+                    + " por arreglar: llama a " + llamada + " (devuelve los casos fallidos del siguiente servicio, con su error, pistas, "
+                    + "spec y código) y corrígelos en una llamada a arreglar_caso.", pendientes.get(0).servicio, List.copyOf(ids));
+        }
+        return new Paso(TipoPaso.CIERRE, "llama a " + llamada + " para cerrar tu bloque (repítela mientras devuelva verificando=true).",
+                null, List.of());
     }
 
     /**

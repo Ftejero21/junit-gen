@@ -32,6 +32,21 @@ public final class ClasificadorFallos {
         return PASA;
     }
 
+    /** Paquete de las excepciones de mal uso de Mockito (PotentialStubbingProblem, InvalidUseOfMatchersException…). */
+    private static final String MOCKITO_MISUSING = "org.mockito.exceptions.misusing.";
+
+    /**
+     * Como {@link #clasificar(String, String)}; un fallo de aserción cuyo mensaje cita una excepción de mal uso de Mockito
+     * (p. ej. capturada por un {@code assertThrows} que esperaba otra) es un error de montaje, no de aserción.
+     */
+    public static String clasificar(String elemento, String tipo, String mensaje) {
+        String r = clasificar(elemento, tipo);
+        if (FALLO_ASERCION.equals(r) && mensaje != null && mensaje.contains(MOCKITO_MISUSING)) {
+            return ERROR_MONTAJE;
+        }
+        return r;
+    }
+
     private static final int MAX_PISTA = 200;
 
     /**

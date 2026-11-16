@@ -10,9 +10,43 @@ import com.junitgen.util.LimitesRespuesta;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 
 /** Registro de herramientas MCP y ejecución con el aviso de solo lectura como primera línea. */
 public class RegistroHerramientas {
+
+    /** Variable de entorno / propiedad que anuncia las herramientas principales como de carga directa (valor 1). */
+    public static final String ENV_CARGA_DIRECTA = "JUNITGEN_CARGA_DIRECTA";
+    public static final String PROP_CARGA_DIRECTA = "junitgen.cargaDirecta";
+    /** Clave de _meta que pide a los clientes con carga diferida cargar la herramienta desde el principio. */
+    static final String META_CARGA_DIRECTA = "anthropic/alwaysLoad";
+    /** Herramientas del flujo habitual de una tanda. */
+    static final Set<String> HERRAMIENTAS_CARGA_DIRECTA = Set.of("escanear_proyecto", "tomar_bloque", "generar_tests",
+            "ejecutar_tests", "arreglar_caso", "registrar_analisis_ia", "detalle_servicio");
+    /** Aviso de solo lectura de las respuestas repetidas de una tanda (el completo ya se envió). */
+    static final String AVISO_CORTO = "Solo lectura (mismas rutas).";
+
+    /** Lectura única de {@link #ENV_CARGA_DIRECTA} / {@link #PROP_CARGA_DIRECTA}. */
+    private static final class CargaDirecta {
+        static final boolean ACTIVA = leer();
+
+        private CargaDirecta() {
+        }
+
+        private static boolean leer() {
+            String v = null;
+            try {
+                v = System.getenv(ENV_CARGA_DIRECTA);
+                if (v == null || v.isBlank()) {
+                    v = System.getProperty(PROP_CARGA_DIRECTA);
+                }
+            } catch (SecurityException e) {
+                System.err.println("junit-gen: no se pudo leer " + ENV_CARGA_DIRECTA + " (" + e.getClass().getSimpleName() + ")");
+            }
+            return v != null && "1".equals(v.trim());
+        }
+    }
 
     private final Map<String, Herramienta> herramientas = new LinkedHashMap<>();
 
@@ -20,6 +54,7 @@ public class RegistroHerramientas {
         registrar(new HerramientaEscanear());
         registrar(new HerramientaSeleccionar());
         registrar(new HerramientaDetalle());
+        registrar(new HerramientaBloque());
         registrar(new HerramientaValidar());
         registrar(new HerramientaGenerar());
         registrar(new HerramientaArreglarCaso());
@@ -47,6 +82,9 @@ public class RegistroHerramientas {
             t.put("title", h.titulo());
             t.put("description", h.descripcion());
             t.set("inputSchema", h.esquema());
+            if (CargaDirecta.ACTIVA && HERRAMIENTAS_CARGA_DIRECTA.contains(h.nombre())) {
+                t.putObject("_meta").put(META_CARGA_DIRECTA, true);
+            }
             ObjectNode a = t.putObject("annotations");
             a.put("title", h.titulo());
             if (h.soloLectura()) {
@@ -60,8 +98,35 @@ public class RegistroHerramientas {
         return r;
     }
 
-    /** Ejecuta la herramienta; los fallos se devuelven como resultado con isError=true. */
+    /**
+     * Ejecuta la herramienta; los fallos se devuelven como resultado con isError=true. Toda la llamada va bajo el cerrojo de
+     * sesión (una llamada a herramienta a la vez, por orden de llegada): solo se suelta mientras espera a las pruebas en segundo
+     * plano ({@link SesionMcp#sinCerrojo}). Al terminar se limpia el bloque de la llamada.
+     */
     public ObjectNode llamar(Herramienta h, JsonNode args, SesionMcp sesion) {
+        ReentrantLock cerrojo = sesion.cerrojo();
+        cerrojo.lock();
+        try {
+            Integer bloque = null;
+            try {
+                bloque = BloquesTanda.resolver(sesion, h.nombre(), args);
+            } catch (RuntimeException e) {
+                System.err.println("junit-gen: no se pudo deducir el bloque de la llamada a " + h.nombre() + ": "
+                        + e.getClass().getSimpleName());
+            }
+            sesion.fijarBloqueLlamada(bloque);
+            if (bloque != null) {
+                // El tiempo en la cola del cerrojo no cuenta para las esperas de la llamada.
+                sesion.reiniciarInicioLlamada();
+            }
+            return llamarConCerrojo(h, args, sesion);
+        } finally {
+            sesion.fijarBloqueLlamada(null);
+            cerrojo.unlock();
+        }
+    }
+
+    private ObjectNode llamarConCerrojo(Herramienta h, JsonNode args, SesionMcp sesion) {
         sesion.consumirNotas();
         if (!HerramientaEstadoVerificacion.NOMBRE.equals(h.nombre()) && !"ejecutar_tests".equals(h.nombre())) {
             // Nota de cabecera de las verificaciones en segundo plano (antes de ejecutar: detalle_servicio la descuenta).
@@ -114,6 +179,9 @@ public class RegistroHerramientas {
             System.err.println("junit-gen: no se pudo calcular la línea de acción de la tanda: " + e.getClass().getSimpleName()
                     + ": " + e.getMessage());
             accion = null;
+        }
+        if (accion != null && !error && sesion.avisoRepetido(sesion.bloqueLlamada(), aviso)) {
+            aviso = AVISO_CORTO;
         }
         ObjectNode res = Json.objeto();
         ArrayNode content = res.putArray("content");

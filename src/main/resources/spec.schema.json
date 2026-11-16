@@ -4,7 +4,7 @@
   "title": "Spec de junit-gen v1",
   "description": "Especificación de casos de prueba. La IA solo escribe este JSON; junit-gen valida, detecta duplicados y genera el código. Las expresiones son cadenas con código Java (se parsean y se reimprimen).",
   "type": "object",
-  "required": ["version", "servicios"],
+  "required": ["servicios"],
   "additionalProperties": false,
   "properties": {
     "version": {"type": "integer", "const": 1},
@@ -12,14 +12,14 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "ruta": {"type": "string", "description": "Ruta del proyecto analizado (raíz del escaneo)."},
+        "ruta": {"type": "string", "description": "Opcional: junit-gen usa el proyecto de la sesión. Solo sin MCP."},
         "modulo": {"type": ["string", "null"], "description": "Opcional: solo pista para desambiguar; junit-gen busca cada servicio en todos los módulos."}
       }
     },
     "estilo": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Estilo deducido de los tests de ejemplo del proyecto.",
+      "description": "Opcional: junit-gen lo deduce de los tests del proyecto; no lo escribas salvo petición expresa.",
       "properties": {
         "patronNombre": {"type": "string", "description": "Patrón del nombre del método de test con {metodo} y {escenario}. Ej.: {metodo}_{escenario}"},
         "displayName": {"type": "boolean", "description": "Añadir @DisplayName con la descripción (solo JUnit 5)."},
@@ -43,7 +43,7 @@
           "seleccion": {
             "type": "object",
             "additionalProperties": false,
-            "description": "Funciones elegidas. Solo sin MCP (con MCP se ignora: usa seleccionar_funciones).",
+            "description": "Funciones elegidas (equivale a seleccionar_funciones: mismas reglas de cupo, mínimo y motivos). Con MCP se aplica solo si el servicio aún no tiene selección; es obligatoria en un bloque del modo paralelo y en los demás casos no la pongas.",
             "properties": {
               "origen": {"type": "string", "enum": ["ia", "usuario", "java", "todas"]},
               "funciones": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["nombre"], "properties": {"nombre": {"type": "string"}, "motivo": {"type": "string"}}}},
@@ -99,16 +99,16 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["id", "metodo", "escenario", "argumentos", "esperado"],
+              "required": ["metodo", "escenario", "esperado"],
               "additionalProperties": false,
               "properties": {
-                "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
-                "metodo": {"type": "string"},
-                "parametros": {"type": ["array", "null"], "items": {"type": "string"}, "description": "Tipos de los parámetros (solo si hay sobrecargas)."},
+                "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$", "description": "Opcional: junit-gen lo deduce de metodo+escenario. Ponlo solo al corregir un caso existente (el id que te dio junit-gen)."},
+                "metodo": {"type": "string", "description": "Nombre de la función o su clave nombre(Tipos), como en detalle_servicio."},
+                "parametros": {"type": ["array", "null"], "items": {"type": "string"}, "description": "Tipos de los parámetros; solo en sobrecargas con el mismo nº de argumentos."},
                 "escenario": {"type": "string", "description": "Escenario en camelCase."},
-                "descripcion": {"type": "string"},
-                "queHaceOriginal": {"type": "string", "description": "Qué hace la función original: 1 frase, máx. 160 caracteres. Obligatorio en casos nuevos."},
-                "queComprueba": {"type": "string", "description": "Qué comprueba este test: 1 frase, máx. 160 caracteres. Obligatorio en casos nuevos."},
+                "descripcion": {"type": "string", "description": "Opcional, formato antiguo: si falta, @DisplayName usa queComprueba."},
+                "queHaceOriginal": {"type": "string", "description": "Qué hace la función original: 1 frase, máx. 160 caracteres. Basta en el primer caso de cada función; los demás la heredan."},
+                "queComprueba": {"type": "string", "description": "Qué comprueba este test: 1 frase, máx. 160 caracteres. Única frase del caso; obligatoria en casos nuevos."},
                 "datos": {"type": "array", "items": {"type": "object", "required": ["tipo", "nombre"], "additionalProperties": false, "properties": {"tipo": {"type": "string"}, "nombre": {"type": "string"}, "valor": {"type": "string"}, "mock": {"type": "boolean"}}}},
                 "preparacion": {"type": "array", "items": {"type": "string"}, "description": "Sentencias Java previas, una por elemento (p. ej. u.setId(10L)); varias en una cadena se separan solas."},
                 "stubs": {

@@ -4,6 +4,7 @@ import com.junitgen.duplicados.ExtractorHuellasTests;
 import com.junitgen.seguridad.EscritorSeguro;
 import com.junitgen.spec.CasoSpec;
 import com.junitgen.spec.ErrorValidacion;
+import com.junitgen.spec.ProyectoSpec;
 import com.junitgen.spec.ResultadoValidacion;
 import com.junitgen.spec.SeleccionSpec;
 import com.junitgen.spec.Spec;
@@ -63,7 +64,29 @@ public final class GeneradorTests {
             + "el código); no preguntes al usuario. Solo con `fallosAsercion: preguntar` en junit-gen.yml decide el usuario "
             + "(«Ajustar lo esperado» / resolver_fallo).";
 
+    /** Código de error: un id de reemplazarCasos no está entre los casos del spec enviado. */
+    public static final String COD_REEMPLAZO_SIN_CASO = "REEMPLAZO_SIN_CASO";
+
     private GeneradorTests() {
+    }
+
+    private static Set<String> reemplazosSinCaso(ResultadoValidacion val, Opciones op) {
+        Set<String> sinCaso = new LinkedHashSet<>();
+        if (op.reemplazar == null || op.reemplazar.isEmpty()) {
+            return sinCaso;
+        }
+        Set<String> presentes = new LinkedHashSet<>();
+        for (ResultadoValidacion.ServicioValidado sv : val.servicios) {
+            for (ResultadoValidacion.CasoValidado cv : sv.casos) {
+                presentes.add(cv.spec.id);
+            }
+        }
+        for (String id : op.reemplazar) {
+            if (id != null && !presentes.contains(id)) {
+                sinCaso.add(id);
+            }
+        }
+        return sinCaso;
     }
 
     public static ResultadoGeneracion generar(ResultadoValidacion val, EscritorSeguro esc, Opciones op) {
@@ -71,6 +94,13 @@ public final class GeneradorTests {
         g.avisos.addAll(val.avisos);
         if (!val.valido) {
             g.errores.addAll(val.errores);
+            return g;
+        }
+        Set<String> sinCaso = reemplazosSinCaso(val, op);
+        if (!sinCaso.isEmpty()) {
+            g.errores.add(ErrorValidacion.error("reemplazarCasos", COD_REEMPLAZO_SIN_CASO,
+                    "El spec no trae un caso con el id " + sinCaso + " que se debe reemplazar.",
+                    "Incluye el `id` del caso que corriges (el que te dio junit-gen) en el caso del spec."));
             return g;
         }
         Path salida = esc.salida();
@@ -250,6 +280,13 @@ public final class GeneradorTests {
             sv.spec.seleccionInformada = huella;
         }
         Spec acumulado = AlmacenSpec.fusionar(previo, val.spec, actualizados, eliminadosTotal, op.reemplazarComun);
+        if (acumulado.proyecto == null) {
+            acumulado.proyecto = new ProyectoSpec();
+        }
+        if (acumulado.proyecto.ruta == null || acumulado.proyecto.ruta.isBlank()) {
+            // Spec compacto sin proyecto.ruta: resolver_fallo y registrar_analisis_ia lo leen de spec.json.
+            acumulado.proyecto.ruta = val.proyecto.raiz.toString();
+        }
         Path rutaSpec = AlmacenSpec.ruta(salida);
         Path rutaInforme = salida.resolve(RutasSalida.INFORME);
         plan.put(rutaSpec, AlmacenSpec.serializar(acumulado));

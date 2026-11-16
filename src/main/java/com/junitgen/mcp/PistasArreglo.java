@@ -6,6 +6,7 @@ import com.junitgen.spec.AsercionSpec;
 import com.junitgen.spec.CasoSpec;
 import com.junitgen.spec.DatoSpec;
 import com.junitgen.spec.EstaticoSpec;
+import com.junitgen.spec.StubSpec;
 import com.junitgen.util.LimitesRespuesta;
 import com.junitgen.util.Textos;
 import com.junitgen.verificacion.ClasificadorFallos;
@@ -54,6 +55,9 @@ final class PistasArreglo {
         }
         try {
             anadir(r, a.origen);
+            if (ClasificadorFallos.ERROR_MONTAJE.equals(a.tipo) || ClasificadorFallos.FALLO_ASERCION.equals(a.tipo)) {
+                anadir(r, campoDerivado(c, paquete));
+            }
             boolean asercion = ClasificadorFallos.FALLO_ASERCION.equals(a.tipo);
             if ((ClasificadorFallos.ERROR_MONTAJE.equals(a.tipo) || asercion) && c != null && c.estaticos != null
                     && !c.estaticos.isEmpty() && paquete != null) {
@@ -92,6 +96,92 @@ final class PistasArreglo {
         if (!r.contains(p)) {
             r.add(p);
         }
+    }
+
+    /**
+     * Caso con stubs sobre un mock profundo de constructor del que el constructor derivó un campo: los stubs no llegan al campo
+     * ya guardado. Null si falta algún dato (cuerpo del constructor ausente o recortado, sin coincidencia, caso ya corregido).
+     */
+    private static String campoDerivado(CasoSpec c, JsonNode paquete) {
+        if (c == null || c.stubs == null || c.stubs.isEmpty() || paquete == null) {
+            return null;
+        }
+        JsonNode cu = paquete.path("montaje").get("cuerpoConstructor");
+        if (cu == null || !cu.isTextual() || cu.asText().isBlank()) {
+            return null;
+        }
+        Set<String> profundos = new LinkedHashSet<>();
+        for (JsonNode d : paquete.path("dependencias")) {
+            JsonNode n = d.get("nombre");
+            if (n != null && n.isTextual() && d.path("profundo").asBoolean(false)
+                    && "CONSTRUCTOR".equals(d.path("obtencion").asText(null))) {
+                profundos.add(n.asText());
+            }
+        }
+        if (profundos.isEmpty()) {
+            return null;
+        }
+        for (StubSpec st : c.stubs) {
+            if (st == null || st.mock == null || !profundos.contains(st.mock)) {
+                continue;
+            }
+            String m = st.mock;
+            Matcher mt = Pattern.compile("this\\.(\\w+)\\s*=[^;]*(?<![\\w$])" + Pattern.quote(m) + "(?![\\w$])[^;]*;").matcher(cu.asText());
+            if (!mt.find()) {
+                continue;
+            }
+            String f = mt.group(1);
+            String tipo = null;
+            boolean conocido = false;
+            for (JsonNode x : paquete.path("mocks")) {
+                if (x.isTextual() && x.asText().startsWith(f + ": ")) {
+                    conocido = true;
+                    tipo = x.asText().substring(f.length() + 2).strip();
+                    break;
+                }
+            }
+            if (!conocido) {
+                for (JsonNode d : paquete.path("dependencias")) {
+                    if (d.path("nombre").isTextual() && f.equals(d.path("nombre").asText())) {
+                        conocido = true;
+                        break;
+                    }
+                }
+            }
+            if (!conocido || f.equals(m) || mencionaCampo(c, f)) {
+                continue;
+            }
+            String t = tipo == null || tipo.isEmpty() ? "" : " `" + tipo + "`";
+            String texto = textoCampoDerivado(f, m, t);
+            if (texto.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > MAX_PISTA) {
+                texto = textoCampoDerivado(f, m, "");
+            }
+            return texto;
+        }
+        return null;
+    }
+
+    private static String textoCampoDerivado(String f, String m, String tipo) {
+        return "El constructor ya guardó `" + f + "` a partir de `" + m + "`: el stub del caso sobre `" + m
+                + "` no le llega salvo con la misma cadena y argumentos. Declara en `datos` un mock" + tipo
+                + ", asígnalo por reflexión al campo `" + f + "` del servicio en `preparacion` y pon los stubs sobre él.";
+    }
+
+    /** true si el caso ya trata el campo: lo nombra entre comillas en la preparación o un stub usa un mock con ese nombre. */
+    private static boolean mencionaCampo(CasoSpec c, String f) {
+        if (c.preparacion != null) {
+            for (String p : c.preparacion) {
+                if (p != null && p.contains("\"" + f + "\"")) {
+                    return true;
+                }
+            }
+        }
+        for (StubSpec st : c.stubs) {
+            if (st != null && f.equals(st.mock)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** P2: por cada clase con mockStatic, los estáticos que el código llama y no están simulados. */

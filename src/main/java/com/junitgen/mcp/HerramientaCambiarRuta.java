@@ -21,24 +21,17 @@ public class HerramientaCambiarRuta implements Herramienta {
 
     @Override
     public String descripcion() {
-        return "Cambia dónde se exportan los tests (/generartest ruta). Sin 'carpetaSalida' pregunta por elicitation en una "
-                + "pantalla [Mantener la ruta por defecto: X] (si no hay, la del Escritorio) [" + Elicitacion.OTRA_RUTA + "]; solo "
-                + "con «" + Elicitacion.OTRA_RUTA + "» (o sin opción que mantener) pide la ruta en una segunda pantalla con un único "
-                + "campo; si el usuario escribe otra, pregunta [Solo esta vez] [Establecer como ruta por defecto]. Sin elicitation devuelve la instrucción para "
-                + "preguntar en el chat; después llama de nuevo con 'carpetaSalida' y, si el usuario la establece, "
-                + "guardarRutaPorDefecto=true. Nunca escribe en el proyecto ni lo escanea; la ruta se valida siempre fuera del "
-                + "proyecto. Si el usuario no pidió nada más, informa del resultado y termina.";
+        return "Cambia dónde se exportan los tests (/generartest ruta). Sin 'carpetaSalida' pregunta al usuario; después llama "
+                + "con 'carpetaSalida' (y guardarRutaPorDefecto=true si la establece como ruta por defecto). Nunca escribe en el "
+                + "proyecto. Sigue accionRequerida.";
     }
 
     @Override
     public ObjectNode esquema() {
         ObjectNode s = Herramienta.esquemaBase();
-        Herramienta.propiedad(s, "ruta", "string", "Raíz del proyecto/workspace (por defecto, el de la sesión, la carpeta abierta "
-                + "en el IDE o el directorio de trabajo del servidor).", false);
-        Herramienta.propiedad(s, "carpetaSalida", "string", "Nueva carpeta de salida elegida por el usuario en el chat (fuera del "
-                + "proyecto).", false);
-        Herramienta.propiedad(s, "guardarRutaPorDefecto", "boolean", "Con carpetaSalida: el usuario eligió [Establecer como ruta por "
-                + "defecto].", false);
+        Herramienta.propiedad(s, "ruta", "string", "Raíz del workspace; por defecto, la de la sesión.", false);
+        Herramienta.propiedad(s, "carpetaSalida", "string", "Nueva carpeta de salida elegida por el usuario (fuera del proyecto).", false);
+        Herramienta.propiedad(s, "guardarRutaPorDefecto", "boolean", "El usuario la estableció como ruta por defecto.", false);
         return s;
     }
 

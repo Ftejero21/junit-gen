@@ -29,17 +29,11 @@ public class HerramientaAnalisisIa implements Herramienta {
 
     @Override
     public String descripcion() {
-        return "Paso normal para todo fallo de aserción, sin preguntar al usuario (no uses ask_user): tras releer el código con "
-                + "detalle_servicio {clase, metodos}, registra en UNA llamada el veredicto de cada caso (error_ia: el test estaba "
-                + "mal planteado; bug_servicio: el código contradice lo que la función debe hacer; dudoso: solo si no puedes "
-                + "decidir) con un motivo que cite el código (condición, cálculo o línea que produce el valor). bug_servicio → "
-                + "posible_bug y dudoso → dudoso (el test se mantiene y el motivo va a informe.md); error_ia → devuelve 'corregir': "
-                + "corrige esperado/aserciones del spec según el código y llama a generar_tests con reemplazarCasos (se vuelven a "
-                + "probar solos; máximo " + VerificadorTests.MAX_INTENTOS + " intentos por caso; después queda dudoso). error_ia "
-                + "autoriza un único reemplazo del caso en generar_tests. Prohibido poner como esperado el valor obtenido sin "
-                + "justificarlo con el código. Solo admite casos en fallo_asercion. Devuelve respuestaFinal solo si no queda nada "
-                + "pendiente; si no, accionRequerida «NO HAS TERMINADO: …» con el siguiente paso. Escribe spec.json y la sección "
-                + "«Revisión de la IA» de informe.md; nunca toca el proyecto.";
+        return "Registra en UNA llamada, sin preguntar al usuario, el veredicto de cada caso con fallo de aserción tras releer el "
+                + "código: error_ia (test mal planteado), bug_servicio (el código contradice lo que la función "
+                + "debe hacer) o dudoso (si no puedes decidir), con motivo que cite el código. error_ia devuelve 'corregir': "
+                + "corrige esperado/aserciones y llama a generar_tests con reemplazarCasos (máx. " + VerificadorTests.MAX_INTENTOS
+                + " intentos). No pongas como esperado el valor obtenido sin justificarlo. Sigue accionRequerida.";
     }
 
     @Override
@@ -48,7 +42,7 @@ public class HerramientaAnalisisIa implements Herramienta {
         ObjectNode props = (ObjectNode) s.get("properties");
         ObjectNode analisis = props.putObject("analisis");
         analisis.put("type", "array");
-        analisis.put("description", "Veredictos, uno por caso (máximo " + VerificadorTests.MAX_ANALISIS + ", sin repetir casos).");
+        analisis.put("description", "Veredictos, uno por caso (máx. " + VerificadorTests.MAX_ANALISIS + ", sin repetir).");
         analisis.put("minItems", 1);
         analisis.put("maxItems", VerificadorTests.MAX_ANALISIS);
         ObjectNode item = analisis.putObject("items");
@@ -60,12 +54,12 @@ public class HerramientaAnalisisIa implements Herramienta {
         veredicto.put("description", "error_ia | bug_servicio | dudoso");
         ArrayNode en = veredicto.putArray("enum");
         VerificadorTests.VEREDICTOS.forEach(en::add);
-        ip.putObject("motivo").put("type", "string").put("description", "Motivo breve del veredicto (máximo "
+        ip.putObject("motivo").put("type", "string").put("description", "Motivo breve que cita el código (máx. "
                 + VerificadorTests.MAX_MOTIVO + " caracteres).");
         item.putArray("required").add("caso").add("veredicto").add("motivo");
         item.put("additionalProperties", false);
         ((ArrayNode) s.get("required")).add("analisis");
-        Herramienta.propiedad(s, "carpetaSalida", "string", "Carpeta de salida (por defecto, la elegida en la sesión).", false);
+        Herramienta.propiedad(s, "carpetaSalida", "string", "Carpeta de salida; por defecto, la de la sesión.", false);
         return s;
     }
 

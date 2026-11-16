@@ -24,6 +24,9 @@ import com.junitgen.util.Textos;
 import com.junitgen.verificacion.ClasificadorFallos;
 import com.junitgen.verificacion.VerificadorTests;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -52,6 +55,8 @@ public class HerramientaArreglarCaso implements Herramienta {
     static final int MAX_ERRORES_RESULTADO = 3;
     /** Casos por llamada. */
     static final int MAX_CASOS_LLAMADA = 12;
+    /** Descripción corta del campo `motivo` en el esquema de la herramienta. */
+    private static final String MOTIVO_ESQUEMA = "Obligatorio en fallos de aserción o si algo queda menos estricto: por qué, citando el código.";
     static final String CAMBIO_COMUN = "Se cambió la parte común del test (construcción, fixtures o imports)";
     /** Rechazo: duplicado o archivo no tocado. */
     static final String COD_NO_REESCRITO = "NO_REESCRITO";
@@ -102,16 +107,11 @@ public class HerramientaArreglarCaso implements Herramienta {
 
     @Override
     public String descripcion() {
-        return "Fase de arreglo (solo cuando accionRequerida dice «Fase de arreglo»): corrige los casos que fallaron durante la tanda. "
-                + "Varios casos del mismo servicio en una llamada: `casos` = [{caso, spec, motivo}] (o uno solo con `caso`, `spec`, "
-                + "`motivo`); `spec` = el caso completo o solo los campos que cambian (los demás se conservan); `servicio` {imports, "
-                + "construccion, fixtures} solo si el error está en la parte común del test. junit-gen reescribe esos casos, recompila "
-                + "y ejecuta la clase una vez y devuelve el resultado de cada uno y los siguientes casos con su error, pistas, spec y "
-                + "código. No rebajes el test: no cambies igual por contiene/noNulo, no quites comprobaciones ni cambies el escenario; "
-                + "corrige la preparación. `motivo` citando el código es obligatorio en fallos de aserción y si algo queda menos "
-                + "estricto (si no, se rechaza con DEBILITA_TEST). Máximo 3 intentos por caso; después lo aparta solo. Si el fallo de "
-                + "aserción es un bug real del código no la uses: registrar_analisis_ia con bug_servicio. No llames a detalle_servicio "
-                + "salvo que venga codigo.masCodigo. No escribas al usuario hasta respuestaFinal.";
+        return "Fase de arreglo (solo si accionRequerida dice «Fase de arreglo»): corrige los casos fallidos. Varios del mismo "
+                + "servicio: `casos` = [{caso, spec, motivo}] (o uno con `caso`, `spec`, `motivo`); `spec` = el caso completo o solo "
+                + "lo que cambia; `servicio` {imports, construccion, fixtures} solo si el error está en la parte común. Devuelve el "
+                + "resultado y los siguientes casos. No rebajes el test: corrige la preparación; `motivo` citando el código es "
+                + "obligatorio en fallos de aserción. Máx. 3 intentos por caso. Bug real: registrar_analisis_ia con bug_servicio.";
     }
 
     @Override
@@ -121,22 +121,19 @@ public class HerramientaArreglarCaso implements Herramienta {
         ObjectNode props = (ObjectNode) s.get("properties");
         ObjectNode casos = props.putObject("casos");
         casos.put("type", "array");
-        casos.put("description", "Casos corregidos del mismo servicio: [{caso, spec, motivo}] (máximo " + MAX_CASOS_LLAMADA + ").");
+        casos.put("description", "Casos del mismo servicio: [{caso, spec, motivo}] (máx. " + MAX_CASOS_LLAMADA + ").");
         casos.put("minItems", 1);
         casos.put("maxItems", MAX_CASOS_LLAMADA);
         ObjectNode item = casos.putObject("items");
         item.put("type", "object");
         ObjectNode ip = item.putObject("properties");
         ip.putObject("caso").put("type", "string").put("description", "Id del caso.");
-        ip.putObject("spec").put("type", "object").put("description", "El caso corregido (completo o solo los campos que cambian).");
-        ip.putObject("motivo").put("type", "string").put("description", "Obligatorio en fallos de aserción y si alguna comprobación "
-                + "queda menos estricta: por qué, citando método, campo o condición del código.");
+        ip.putObject("spec").put("type", "object").put("description", "Caso corregido (completo o solo los campos que cambian).");
+        ip.putObject("motivo").put("type", "string").put("description", MOTIVO_ESQUEMA);
         item.putArray("required").add("caso");
-        Herramienta.propiedad(s, "spec", "object", "El caso corregido (completo o solo los campos que cambian).", false);
-        Herramienta.propiedad(s, "servicio", "object", "Solo si el error está en la parte común del test: {imports, construccion, "
-                + "fixtures} corregidos.", false);
-        Herramienta.propiedad(s, "motivo", "string", "Obligatorio en fallos de aserción y si alguna comprobación queda menos estricta: "
-                + "por qué, citando método, campo o condición del código.", false);
+        Herramienta.propiedad(s, "spec", "object", "Caso corregido (completo o solo los campos que cambian).", false);
+        Herramienta.propiedad(s, "servicio", "object", "Solo si el error está en la parte común: {imports, construccion, fixtures}.", false);
+        Herramienta.propiedad(s, "motivo", "string", MOTIVO_ESQUEMA, false);
         return s;
     }
 
@@ -347,6 +344,8 @@ public class HerramientaArreglarCaso implements Herramienta {
         Fachada.Generacion g = null;
         Path salidaReal = salida;
         if (!aceptados.isEmpty()) {
+            VerificacionesSesion.PuntoComun puntoBase = servicioArg == null ? null
+                    : capturarPuntoComun(sesion, salida, servicio, aceptados.get(0));
             Regeneracion rg = regenerar(sesion, proyecto, salida, spec, aceptados.get(0).u.servicio(), mapa(aceptados), servicioArg);
             ResultadoGeneracion res = rg.g().resultado();
             if (!res.errores.isEmpty()) {
@@ -392,7 +391,11 @@ public class HerramientaArreglarCaso implements Herramienta {
                     }
                 }
                 if (!aplicados.isEmpty()) {
-                    salidaReal = aplicar(sesion, proyecto, salida, g, aplicados, servicioArg != null, servicio);
+                    // Solo una corrección común sobre una clase que antes compilaba (sin error común apuntado) es reversible.
+                    VerificacionesSesion.PuntoComun punto = comunAplicada && puntoBase != null
+                            && aplicados.stream().noneMatch(it -> it.a.comun)
+                            && ArreglosFinal.pendientesComunes(sesion, proyecto, servicio).isEmpty() ? puntoBase : null;
+                    salidaReal = aplicar(sesion, proyecto, salida, g, aplicados, servicioArg != null, servicio, punto);
                 }
             }
         }
@@ -410,7 +413,7 @@ public class HerramientaArreglarCaso implements Herramienta {
                 return rechazo(sesion, proyecto, salidaReal, it.a, it.errores, it.caso(), it.nuevo);
             }
             if (!sesion.verificaciones().esperarInactiva(salidaReal, HerramientaEjecutar.restoEspera(sesion))) {
-                return verificando(List.of());
+                return verificando(sesion, List.of());
             }
             return cerrar(sesion, proyecto, salidaReal, anterior(it.caso(), sesion.arreglo(proyecto, it.caso())));
         }
@@ -427,7 +430,7 @@ public class HerramientaArreglarCaso implements Herramienta {
                     pendientes.add(it);
                 }
             }
-            return verificando(pendientes);
+            return verificando(sesion, pendientes);
         }
         boolean todosRechazados = true;
         ArrayNode resultados = Json.MAPPER.createArrayNode();
@@ -614,7 +617,7 @@ public class HerramientaArreglarCaso implements Herramienta {
      * caso y una verificación del servicio. Devuelve la salida real.
      */
     private static Path aplicar(SesionMcp sesion, Path proyecto, Path salida, Fachada.Generacion g, List<Item> aplicados,
-                                boolean conServicio, String servicio) {
+                                boolean conServicio, String servicio, VerificacionesSesion.PuntoComun punto) {
         trasGenerar(sesion, proyecto, g);
         ResultadoGeneracion rg = g.resultado();
         Path salidaReal = g.escritor() != null ? g.escritor().salida() : salida;
@@ -666,6 +669,7 @@ public class HerramientaArreglarCaso implements Herramienta {
                     todos.remove(0);
                 }
                 x.cambios = todos;
+                x.correccionDeshecha = null;
                 if (motivoGuardado != null) {
                     x.motivo = motivoGuardado;
                 }
@@ -689,9 +693,41 @@ public class HerramientaArreglarCaso implements Herramienta {
         if (comun) {
             ids.addAll(ArreglosFinal.pendientesComunes(sesion, proyecto, servicio));
         }
+        if (punto != null) {
+            Set<String> propios = new LinkedHashSet<>();
+            for (Item it : aplicados) {
+                propios.add(it.caso());
+            }
+            sesion.verificaciones().fijarPuntoComun(salidaReal, servicio, new VerificacionesSesion.PuntoComun(
+                    punto.archivoTest(), punto.textoPrevio(), punto.servicioPrevio(), propios, punto.estadosPrevios()));
+        }
         ArreglosFinal.aplicada(sesion, proyecto, salidaReal, servicio, ids);
         sesion.guardarTanda(proyecto, salidaReal, Boolean.FALSE);
         return salidaReal;
+    }
+
+    /**
+     * Punto de restauración previo a una corrección de la parte común: archivo de test del servicio y su texto, entrada del
+     * servicio en spec.json y estados de sus casos. null si no se puede capturar (sin archivo de test): no habrá deshacer.
+     */
+    private static VerificacionesSesion.PuntoComun capturarPuntoComun(SesionMcp sesion, Path salida, String fqn, Item primero) {
+        try {
+            if (fqn == null || primero == null || primero.u == null || primero.u.servicio() == null) {
+                return null;
+            }
+            Path archivo = VerificadorTests.archivoDeCaso(salida, primero.caso());
+            if (archivo == null || !Files.isRegularFile(archivo)) {
+                return null;
+            }
+            String texto = Files.readString(archivo, StandardCharsets.UTF_8);
+            ObjectNode previo = Json.MAPPER.valueToTree(primero.u.servicio());
+            Map<String, String> estados = new LinkedHashMap<>(sesion.estadosDeSesion(salida));
+            estados.keySet().retainAll(new HashSet<>(sesion.casosDeServicio(salida, fqn)));
+            return new VerificacionesSesion.PuntoComun(archivo, texto, previo, Set.of(), estados);
+        } catch (IOException | RuntimeException e) {
+            System.err.println("junit-gen: no se pudo guardar el punto de restauración de " + fqn + ": " + e.getClass().getSimpleName());
+            return null;
+        }
     }
 
     /**
@@ -745,10 +781,10 @@ public class HerramientaArreglarCaso implements Herramienta {
     }
 
     /** Respuesta cuando la verificación no terminó dentro de la llamada (con los casos rechazados, si los hay). */
-    private static Resultado verificando(List<Item> rechazados) {
+    private static Resultado verificando(SesionMcp sesion, List<Item> rechazados) {
         ObjectNode r = Json.objeto();
         r.put("accionRequerida", HerramientaEjecutar.ACCION_PENDIENTE_IA + "La corrección está aplicada y se está probando: "
-                + "llama ahora a ejecutar_tests {} (te dará el resultado y los siguientes casos).");
+                + "llama ahora a " + BloquesTanda.llamadaEjecutar(sesion) + " (te dará el resultado y los siguientes casos).");
         r.put("verificando", true);
         if (!rechazados.isEmpty()) {
             ArrayNode a = r.putArray("rechazados");
@@ -802,7 +838,14 @@ public class HerramientaArreglarCaso implements Herramienta {
                     + "revisión." : "Ahora compila y pasa.");
         } else if (Tanda.ARREGLO_PENDIENTE.equals(estado)) {
             o.put("resultado", "sigue_fallando");
-            o.put("detalle", "Sigue fallando: mira el caso.error nuevo.");
+            if (a.intentos >= 1 && a.error != null && a.error.equals(a.errorInicial)) {
+                int quedan = Math.max(0, VerificadorTests.MAX_INTENTOS - a.intentos);
+                o.put("detalle", "Sigue fallando con el mismo error que antes de tu cambio: lo que cambiaste no afecta al fallo. No "
+                        + "repitas variantes de lo mismo; cambia de enfoque con `pistas` y `codigo`. Te " + (quedan == 1 ? "queda 1 intento"
+                        : "quedan " + quedan + " intentos") + ".");
+            } else {
+                o.put("detalle", "Sigue fallando: mira el caso.error nuevo.");
+            }
         } else if (Tanda.ARREGLO_APARTADO.equals(estado) && a.motivo != null && a.motivo.startsWith(ArreglosFinal.MOTIVO_COMUN)) {
             o.put("resultado", Tanda.ARREGLO_APARTADO);
             o.put("detalle", "La clase de test de este servicio no compila por un error común: se han apartado todos sus casos "

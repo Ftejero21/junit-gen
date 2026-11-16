@@ -11,10 +11,14 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Servidor MCP estándar por stdio (JSON-RPC 2.0, un mensaje por línea). El hilo lector despacha las
- * peticiones a un worker único y completa las respuestas a peticiones servidor→cliente.
+ * Servidor MCP estándar por stdio (JSON-RPC 2.0, un mensaje por línea). El hilo lector despacha las peticiones
+ * {@code tools/call} a un pool de hilos (cada llamada es atendida bajo el cerrojo de sesión de
+ * {@link RegistroHerramientas#llamar}: una a la vez, por orden de llegada, en un único proceso y sesión; así varios
+ * trabajadores en paralelo pueden esperar las pruebas a la vez) y el resto de peticiones a un worker único, y completa las
+ * respuestas a peticiones servidor→cliente.
  */
 public class ServidorMcp {
 
@@ -26,6 +30,13 @@ public class ServidorMcp {
     private final RegistroHerramientas registro = new RegistroHerramientas();
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "junit-gen-mcp-worker");
+        t.setDaemon(true);
+        return t;
+    });
+    private final AtomicInteger numeroLlamada = new AtomicInteger();
+    /** Hilos de las llamadas a herramientas (un hilo por llamada en curso). */
+    private final ExecutorService llamadas = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "junit-gen-mcp-llamada-" + numeroLlamada.incrementAndGet());
         t.setDaemon(true);
         return t;
     });
@@ -44,57 +55,20 @@ public class ServidorMcp {
     }
 
     public static String instrucciones() {
-        return "REGLA: durante una tanda cada respuesta tuya es una llamada a una herramienta de junit-gen; no escribas mensajes "
-                + "de progreso ni resúmenes (un mensaje sin llamada termina el turno). Toda respuesta con trabajo pendiente empieza "
-                + "por «accionRequerida: NO HAS TERMINADO (servicio k de N): llama ahora a …»: haz exactamente esa llamada; solo "
-                + "escribes al usuario al recibir respuestaFinal. Si pierdes el hilo, escanear_proyecto {continuar: true}. "
-                + "junit-gen genera tests unitarios JUnit a partir de un spec JSON. Flujo obligatorio, en orden y sin pedir "
-                + "confirmación: 1) escanear_proyecto una vez (con `servicios` si el usuario los nombró; un número N es "
-                + "`numServicios`; `todas`=true solo si el usuario escribió `todas`; `funciones` solo si el usuario nombró funciones "
-                + "de UN servicio; si escribió una frase libre, pásala tal cual en `peticion` (sin numServicios, servicios, "
-                + "funciones, todas ni continuar): junit-gen la interpreta): devuelve un resumen con el plan (provisional hasta elegir funciones) y el siguiente paso. 2) Para "
-                + "CADA servicio del plan: elige TÚ por importancia de negocio (dentro del cupo, con motivo) de «Funciones "
-                + "candidatas» (en el escaneo o en siguienteServicio.candidatas; si no vienen, seleccionar_funciones {clase}) y llama "
-                + "a seleccionar_funciones {clase, funciones, omitidas} hasta que no devuelva errores: su respuesta ya trae el "
-                + "paquete de trabajo del servicio; detalle_servicio solo si paginacion.siguiente no es null (con `todas`, "
-                + "`funciones` o selección guardada: detalle_servicio {clase, paquete: 1}) → spec con los casos de casosPlan (solo funciones listadas, máx. "
-                + "maxCasos, cada caso con queHaceOriginal y queComprueba) → generar_tests, que valida el spec (si devuelve errores, "
-                + "corrige y repite; validar_spec es opcional; sigue la primera línea accionRequerida). generar_tests prueba esos tests en segundo plano y "
-                + "responde enseguida: no esperes, no sondees ni llames a ejecutar_tests entre servicios; sigue con el siguiente. "
-                + "No arregles nada durante la tanda: los casos que fallen se apuntan solos («N fallos apuntados para arreglar al "
-                + "final») y se arreglan cuando estén generados todos los servicios (solo con `arreglos: inmediato` en junit-gen.yml "
-                + "se corrigen al llegar la nota «Verificación en segundo plano…»). Nunca preguntes al usuario (ni con ask_user) qué "
-                + "hacer con un test que falla, ni pongas como "
-                + "esperado el valor obtenido sin justificarlo con el código. 3) Con plan.restantes = 0, ejecutar_tests sin "
-                + "argumentos (repítela mientras devuelva verificando=true): si hay fallos apuntados abre la fase de arreglo: junit-gen "
-                + "corrige solo lo mecánico y cada respuesta trae los casos fallidos del siguiente servicio (con su error, pistas, "
-                + "spec y código); corrígelos en una llamada a arreglar_caso {casos: [{caso, spec, motivo}]} (fallo de aserción: con "
-                + "motivo que cite el código si el test estaba mal planteado, o registrar_analisis_ia con bug_servicio si es un bug "
-                + "del código; no rebajes el test). junit-gen recompila la clase una vez y prueba los casos al momento (máximo 3 "
-                + "intentos; después los aparta solo). Sin casos pendientes devuelve respuestaFinal. junit-gen rechaza cerrar si en la "
-                + "sesión no se ha generado nada, si el plan está incompleto (parcial=true solo si el usuario lo pidió) o si "
-                + "carpetaTests no es la carpeta de la sesión. 4) Respuesta final: EXACTAMENTE el markdown de respuestaFinal de la "
-                + "última respuesta de junit-gen que lo traiga, tal cual, sin añadir, quitar ni cambiar nada. Si una respuesta "
-                + "empieza por accionRequerida «NO HAS TERMINADO: …» no escribas el mensaje final: haz ese paso. "
-                + "Prohibido durante el flujo: terminal o lectura de archivos (proyecto, carpetas de salida, temporales) y carpetas "
-                + "de salida de sesiones anteriores; si falta información, pídela a junit-gen (paginacion.siguiente, seccion, tipos, "
-                + "paginaResultados). Regla de solo lectura: el proyecto analizado nunca se modifica; junit-gen solo escribe en la "
-                + "carpeta de salida (y, si el usuario lo pide, guarda su ruta por defecto en rutas-por-defecto.json junto al JAR). "
-                + "El agente no edita el proyecto, no hace operaciones git sobre él y no escribe .java de test: solo el spec; copiar "
-                + "los tests al proyecto es un paso manual del usuario. Pasa en 'ruta' la raíz del workspace que ya conoces (nunca "
-                + "un módulo). Sin 'carpetaSalida', junit-gen pregunta una sola vez «¿Dónde exportamos los tests?» y la recuerda. "
-                + "junit-gen NO pregunta si probar los tests: se prueban siempre en segundo plano (compila y ejecuta en una carpeta "
-                + "temporal de la salida, sin tocar el proyecto); no lo preguntes tú tampoco. Solo si "
-                + "verificacion.decision=descartar (junit-gen.yml con `verificacion: nunca`, o el usuario pidió no ejecutarlos) no "
-                + "se prueba nada: no llames a ejecutar_tests y muestra respuestaFinal. Las preguntas de junit-gen (carpeta de "
-                + "salida y, solo con `verificacion: preguntar` o `fallosAsercion: preguntar` en junit-gen.yml, la de probar los "
-                + "tests o la de fallos de aserción) caducan (~150 s): si una queda sin responder (lo indica accionRequerida, o "
-                + "verificacion.decision=pendiente_usuario con `verificacion: preguntar`) NO decidas por el usuario; muestra respuestaFinal (con pendiente_usuario, llama antes a ejecutar_tests sin argumentos "
-                + "para repetirla), y nunca digas que no se generaron tests si resumenSesion.casosGenerados > 0. "
-                + "El progreso de la tanda se guarda en tanda.json de la carpeta de salida: si el usuario escribe `continuar` o si pierdes "
-                + "el hilo (p. ej. en un chat nuevo con el contexto agotado, o contexto resumido), llama a escanear_proyecto {continuar: true} (sin numServicios, "
-                + "servicios, funciones ni todas) y sigue su «Siguiente paso»: retoma por el siguiente servicio sin repetir nada. "
-                + "Usa el prompt GenerarTest.";
+        return "REGLA: durante una tanda cada respuesta tuya es una llamada a una herramienta de junit-gen (o, en modo paralelo, "
+                + "las llamadas a Agent que lanzan los subagentes de los bloques); un mensaje sin llamada termina el turno. Haz "
+                + "exactamente lo que diga accionRequerida y no escribas al usuario hasta recibir respuestaFinal: entonces escribe "
+                + "EXACTAMENTE ese markdown, tal cual. Si pierdes el hilo: escanear_proyecto {continuar: true}. junit-gen genera "
+                + "tests JUnit a partir de un spec JSON. Empieza por escanear_proyecto, una vez: pasa en `peticion` la frase del "
+                + "usuario tal cual y en `ruta` la raíz del workspace (nunca un módulo); su «Siguiente paso» indica el resto "
+                + "(seleccionar_funciones, spec, generar_tests, ejecutar_tests, arreglar_caso). En cada caso del spec: "
+                + "queHaceOriginal una vez por función y queComprueba en cada caso; junit-gen completa el resto. Modo paralelo "
+                + "(solo Claude Code con subagentes; si no los tienes, ignóralo): si el escaneo devuelve bloques, lanza un "
+                + "subagente por bloque con el promptTrabajador y, al volver todos, llama a ejecutar_tests {} hasta "
+                + "respuestaFinal. No arregles nada durante la tanda: los fallos se arreglan al final. No rebajes los tests ni "
+                + "pongas como esperado el valor obtenido sin justificarlo con el código. Nunca preguntes al usuario qué hacer con "
+                + "un test que falla. Prohibido: terminal y leer archivos. Regla de solo lectura: el proyecto nunca se modifica; junit-gen "
+                + "solo escribe en la carpeta de salida. Usa el prompt GenerarTest.";
     }
 
     /** Bucle principal: lee hasta EOF, termina lo pendiente y sale. */
@@ -112,16 +86,21 @@ public class ServidorMcp {
                 despachar(msg);
             }
         } finally {
-            // Cierra la sesión: también cancela las verificaciones en segundo plano (espera acotada) antes del worker.
+            // Cierra la sesión: también cancela las verificaciones en segundo plano (espera acotada) antes de los hilos.
             sesion.cerrar();
             worker.shutdown();
+            llamadas.shutdown();
             try {
                 if (!worker.awaitTermination(15, TimeUnit.MINUTES)) {
                     worker.shutdownNow();
                 }
+                if (!llamadas.awaitTermination(15, TimeUnit.MINUTES)) {
+                    llamadas.shutdownNow();
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 worker.shutdownNow();
+                llamadas.shutdownNow();
             }
         }
     }
@@ -150,7 +129,9 @@ public class ServidorMcp {
             return;
         }
         long recibido = System.nanoTime();
-        worker.submit(() -> {
+        // Las llamadas a herramientas van a su pool (la exclusión mutua la da el cerrojo de sesión); el resto, al worker único.
+        ExecutorService destino = "tools/call".equals(metodo) ? llamadas : worker;
+        destino.submit(() -> {
             sesion.iniciarLlamada(id.asText(), recibido);
             try {
                 if (sesion.cancelado(id.asText())) {
@@ -187,8 +168,10 @@ public class ServidorMcp {
             sesion.cancelar(params.get("requestId").asText());
         } else if ("notifications/roots/list_changed".equals(metodo)) {
             sesion.invalidarRaices();
+        } else if ("notifications/initialized".equals(metodo)) {
+            PreEscaneo.lanzar(sesion);
         }
-        // notifications/initialized y el resto: sin acción.
+        // El resto: sin acción.
     }
 
     JsonNode procesar(String metodo, JsonNode params) {
@@ -221,6 +204,7 @@ public class ServidorMcp {
     }
 
     private JsonNode inicializar(JsonNode params) {
+        sesion.fijarCliente(params == null ? null : params.path("clientInfo").path("name").asText(null));
         String pedida = params == null ? null : params.path("protocolVersion").asText(null);
         String version = pedida != null && VERSIONES.contains(pedida) ? pedida : VERSION_POR_DEFECTO;
         sesion.inicializar(version, params == null ? null : params.get("capabilities"));

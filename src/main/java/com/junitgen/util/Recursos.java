@@ -1,5 +1,6 @@
 package com.junitgen.util;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
@@ -7,6 +8,8 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /** Recursos incluidos en el JAR: esquema del spec (fuente única), ejemplo y prompts. */
 public final class Recursos {
@@ -35,6 +38,66 @@ public final class Recursos {
         n.remove("$schema");
         n.remove("$id");
         return n;
+    }
+
+    /** Claves de esquema que {@link #esquemaSpecMcp()} elimina (solo texto o restricciones que el servidor valida igual). */
+    private static final Set<String> CLAVES_ESQUEMA_OMITIDAS = Set.of("description", "additionalProperties", "title");
+    /** Campos que añade la herramienta: la IA no los escribe y no se anuncian en tools/list. */
+    private static final Set<String> CAMPOS_DE_HERRAMIENTA = Set.of("seleccionInformada", "huella", "huellaEntrada", "estado",
+            "intentosMontaje", "veredictoIa", "motivoIa", "autorizacionCambio");
+    /** Ruta de propiedades hasta los campos de un caso. */
+    private static final String[] RUTA_CASO = {"servicios", "items", "casos", "items"};
+    private static final String[] RUTA_STUB_CASO = {"servicios", "items", "casos", "items", "stubs", "items"};
+    private static final String[] RUTA_DATO_CASO = {"servicios", "items", "casos", "items", "datos", "items"};
+    private static final String[] RUTA_ASERCION_CASO = {"servicios", "items", "casos", "items", "aserciones", "items"};
+
+    /**
+     * Esquema del spec para tools/list: sin descripciones, sin additionalProperties (el servidor sigue validando
+     * estricto), sin los campos que añade la herramienta y con solo seis descripciones cortas.
+     */
+    public static ObjectNode esquemaSpecMcp() {
+        ObjectNode n = esquemaSpec();
+        reducir(n, false);
+        describir(n, "Función o su clave nombre(Tipos).", "metodo", RUTA_CASO);
+        describir(n, "Qué hace la función, 1 frase; solo en su 1.er caso.", "queHaceOriginal", RUTA_CASO);
+        describir(n, "Qué comprueba este test, 1 frase.", "queComprueba", RUTA_CASO);
+        describir(n, "Llamada sobre el mock sin receptor: findById(10L).", "llamada", RUTA_STUB_CASO);
+        describir(n, "Expresión Java.", "valor", RUTA_DATO_CASO);
+        describir(n, "Expresión sobre 'resultado'.", "real", RUTA_ASERCION_CASO);
+        return n;
+    }
+
+    private static void reducir(JsonNode nodo, boolean mapaPropiedades) {
+        if (nodo.isObject()) {
+            ObjectNode o = (ObjectNode) nodo;
+            if (mapaPropiedades) {
+                CAMPOS_DE_HERRAMIENTA.forEach(o::remove);
+            } else {
+                CLAVES_ESQUEMA_OMITIDAS.forEach(o::remove);
+            }
+            for (Map.Entry<String, JsonNode> e : o.properties()) {
+                reducir(e.getValue(), !mapaPropiedades && "properties".equals(e.getKey()));
+            }
+        } else if (nodo.isArray()) {
+            for (JsonNode hijo : nodo) {
+                reducir(hijo, false);
+            }
+        }
+    }
+
+    private static void describir(ObjectNode raiz, String texto, String campo, String[] ruta) {
+        JsonNode actual = raiz;
+        for (String paso : ruta) {
+            JsonNode siguiente = actual.path("properties").has(paso) ? actual.path("properties").get(paso) : actual.get(paso);
+            if (siguiente == null || siguiente.isMissingNode()) {
+                return;
+            }
+            actual = siguiente;
+        }
+        JsonNode propiedad = actual.path("properties").get(campo);
+        if (propiedad instanceof ObjectNode p) {
+            p.put("description", texto);
+        }
     }
 
     public static String ejemploSpec() {

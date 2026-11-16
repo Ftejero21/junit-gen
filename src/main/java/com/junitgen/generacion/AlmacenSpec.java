@@ -125,6 +125,41 @@ public final class AlmacenSpec {
     }
 
     /**
+     * Herencia de la parte común: por cada servicio de {@code nuevo} que ya está generado en {@code previo} (con algún
+     * caso no eliminado), una {@code construccion} ausente (null) o unos {@code imports} ausentes (null o vacíos)
+     * heredan los guardados (copia profunda). Una {@code construccion} presente, aunque vacía ({@code {}}), la
+     * sustituye. No toca fixtures ni nada que venga informado.
+     */
+    public static void heredarComun(Spec nuevo, Spec previo) {
+        if (nuevo == null || previo == null || nuevo.servicios == null || previo.servicios == null) {
+            return;
+        }
+        for (ServicioSpec sn : nuevo.servicios) {
+            if (sn == null || sn.clase == null) {
+                continue;
+            }
+            ServicioSpec destino = servicio(previo, sn.clase, sn.modulo);
+            if (destino == null || destino.casos == null || destino.casos.stream()
+                    .noneMatch(c -> c != null && !"eliminado".equals(c.estado))) {
+                continue;
+            }
+            try {
+                if (sn.construccion == null && destino.construccion != null) {
+                    sn.construccion = Json.MAPPER.readValue(Json.MAPPER.writeValueAsString(destino.construccion),
+                            com.junitgen.spec.ConstruccionSpec.class);
+                }
+                if ((sn.imports == null || sn.imports.isEmpty()) && destino.imports != null
+                        && !destino.imports.isEmpty()) {
+                    sn.imports = new ArrayList<>(destino.imports);
+                }
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                System.err.println("No se pudo heredar la parte común guardada de " + sn.clase + ": "
+                        + e.getClass().getSimpleName());
+            }
+        }
+    }
+
+    /**
      * Huella (16 hex) del contenido normalizado de una selección: origen, funciones y omitidas con nombre y
      * motivo, sin depender del orden ni de espacios sobrantes. null si no hay selección.
      */

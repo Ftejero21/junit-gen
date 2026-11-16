@@ -12,6 +12,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Guía de la tanda: único punto que formatea la cabecera «no pares» ({@code accionRequerida: NO HAS TERMINADO (servicio k
@@ -39,6 +41,13 @@ final class GuiaTanda {
     private static final String MAS = "…";
     /** Marca de {@code paginacion.siguiente} no nulo en el cuerpo JSON (dentro de cadenas las comillas van escapadas). */
     static final String MARCA_SIGUIENTE = "\"siguiente\":{";
+    /** Marca de un paquete de trabajo en el cuerpo JSON (tomar_bloque o siguienteServicio de un bloque). */
+    static final String MARCA_PAQUETE = "\"paquete\":{";
+    /** Marca del nodo de bloque terminado en el cuerpo JSON. */
+    static final String MARCA_BLOQUE_TERMINADO = "\"bloqueTerminado\":true";
+    /** Grupo real de la primera línea de la carga de arreglo: «casos 1–6 de 6» o «caso 1 de 6». */
+    private static final Pattern FASE_ARREGLO_EN_CUERPO = Pattern.compile("Fase de arreglo: (casos? \\d+(?:\u2013\\d+)? de \\d+)");
+    private static final Pattern BLOQUE_EN_CUERPO =Pattern.compile("\"bloque\":(\\d+)");
 
     private GuiaTanda() {
     }
@@ -81,8 +90,21 @@ final class GuiaTanda {
         return activa(sesion, sesion.fachada().ultimaRuta()) ? MAX_ACCION + 1 : 0;
     }
 
-    /** «servicio k de N» (servicio en curso dentro del plan) o «cierre de la tanda» si no quedan casos. */
+    /** «bloque b, » en una llamada con bloque; vacío en el resto. */
+    static String prefijoBloque(SesionMcp sesion) {
+        Integer b = sesion.bloqueLlamada();
+        return b == null ? "" : "bloque " + b + ", ";
+    }
+
+    /**
+     * «servicio k de N» (servicio en curso dentro del plan) o «cierre de la tanda» si no quedan casos; en una llamada con
+     * bloque, con el prefijo «bloque b, » y k de N dentro del bloque.
+     */
     static String posicion(SesionMcp sesion, Path proyecto) {
+        return prefijoBloque(sesion) + posicionBase(sesion, proyecto);
+    }
+
+    private static String posicionBase(SesionMcp sesion, Path proyecto) {
         SesionMcp.ProgresoPlan pp = sesion.progresoPlan(proyecto);
         String actual = HerramientaGenerar.siguienteServicio(sesion, proyecto);
         if (pp == null || pp.restantes() == 0 || actual == null) {
@@ -109,7 +131,7 @@ final class GuiaTanda {
             fqns.add(m.fqn());
         }
         int k = new ArrayList<>(fqns).indexOf(fqn) + 1;
-        return k <= 0 ? posicion(sesion, proyecto) : "servicio " + k + " de " + fqns.size();
+        return k <= 0 ? posicion(sesion, proyecto) : prefijoBloque(sesion) + "servicio " + k + " de " + fqns.size();
     }
 
     /** «metodo=faltan» de los métodos del servicio con casos pendientes, separados por «, » (máx. {@link #MAX_REQUERIDOS}). */
@@ -148,9 +170,23 @@ final class GuiaTanda {
      */
     static String pasoServicio(SesionMcp sesion, Path proyecto, Path salida, String herramienta, JsonNode args, int maxReq,
                                boolean haySiguiente) {
+        return pasoServicio(sesion, proyecto, salida, herramienta, args, maxReq, haySiguiente, false);
+    }
+
+    /**
+     * Como {@link #pasoServicio(SesionMcp, Path, Path, String, JsonNode, int, boolean)}; {@code hayPaquete} = la respuesta
+     * trae un paquete de trabajo (tomar_bloque o {@code siguienteServicio.paquete} de un bloque). Solo cambia el texto en una
+     * llamada con bloque.
+     */
+    static String pasoServicio(SesionMcp sesion, Path proyecto, Path salida, String herramienta, JsonNode args, int maxReq,
+                               boolean haySiguiente, boolean hayPaquete) {
         String s = HerramientaGenerar.siguienteServicio(sesion, proyecto);
         if (s == null) {
-            return textoCierre();
+            return textoCierre(sesion);
+        }
+        Integer bloque = sesion.bloqueLlamada();
+        if (bloque != null) {
+            return pasoServicioBloque(sesion, proyecto, salida, herramienta, maxReq, haySiguiente, hayPaquete, s, bloque);
         }
         String simple = "`" + Textos.nombreSimple(s) + "`";
         String req = requeridos(sesion, proyecto, s, maxReq);
@@ -182,6 +218,36 @@ final class GuiaTanda {
                 + "método: " + req + ".";
     }
 
+    /** Paso del servicio en curso de un bloque (el trabajador no elige con seleccionar_funciones: la selección va en el spec). */
+    private static String pasoServicioBloque(SesionMcp sesion, Path proyecto, Path salida, String herramienta, int maxReq,
+                                             boolean haySiguiente, boolean hayPaquete, String s, int bloque) {
+        String simple = "`" + Textos.nombreSimple(s) + "`";
+        String req = requeridos(sesion, proyecto, s, maxReq);
+        boolean elige = sesion.necesitaSeleccion(proyecto, salida, s);
+        String casos = elige ? "Casos por método (de las funciones que elijas): " : "Casos por método: ";
+        String conSeleccion = elige ? "(servicios[0].seleccion + casos)" : "(casos)";
+        if (VALIDAR.equals(herramienta)) {
+            return "llama ahora a generar_tests con ese mismo spec (casos por método de " + simple + ": " + req + ").";
+        }
+        if (haySiguiente) {
+            return "el paquete continúa: llama ahora UNA vez a detalle_servicio con los argumentos exactos de paginacion.siguiente "
+                    + "y después a generar_tests con el spec de " + simple + " " + conSeleccion + ". " + casos + req + ".";
+        }
+        if (GENERAR.equals(herramienta) && conAcreditados(sesion, proyecto, s)) {
+            return simple + " aún no está completo: llama ahora a generar_tests con un spec de " + simple + " que AÑADA casos nuevos "
+                    + "(otra rama, un error o un valor límite) por método: " + req + ".";
+        }
+        if (hayPaquete) {
+            return "escribe el spec de " + simple + " con el paquete de abajo " + conSeleccion + " y llama ahora a generar_tests. "
+                    + casos + req + ".";
+        }
+        if (DETALLE.equals(herramienta) || SELECCIONAR.equals(herramienta)) {
+            return "con lo que ya tienes escribe el spec de " + simple + " " + conSeleccion + " y llama ahora a generar_tests. "
+                    + casos + req + ".";
+        }
+        return "llama ahora a tomar_bloque {bloque: " + bloque + "} y después a generar_tests con el spec de " + simple + ".";
+    }
+
     /** Texto de la llamada a hacer para el paso pendiente, según la herramienta que acaba de responder. */
     static String textoPaso(HerramientaEjecutar.Paso p, SesionMcp sesion, Path proyecto, Path salida, String herramienta,
                             JsonNode args) {
@@ -200,12 +266,18 @@ final class GuiaTanda {
     /** Como {@link #textoPaso(HerramientaEjecutar.Paso, SesionMcp, Path, Path, String, JsonNode, int)} con {@code haySiguiente}. */
     static String textoPaso(HerramientaEjecutar.Paso p, SesionMcp sesion, Path proyecto, Path salida, String herramienta,
                             JsonNode args, int maxReq, boolean haySiguiente) {
+        return textoPaso(p, sesion, proyecto, salida, herramienta, args, maxReq, haySiguiente, false);
+    }
+
+    /** Como {@link #textoPaso(HerramientaEjecutar.Paso, SesionMcp, Path, Path, String, JsonNode, int, boolean)} con {@code hayPaquete}. */
+    static String textoPaso(HerramientaEjecutar.Paso p, SesionMcp sesion, Path proyecto, Path salida, String herramienta,
+                            JsonNode args, int maxReq, boolean haySiguiente, boolean hayPaquete) {
         int n = p.ids() == null ? 0 : p.ids().size();
         boolean uno = n == 1;
         boolean trasEstado = HerramientaEstadoVerificacion.NOMBRE.equals(herramienta);
         return switch (p.tipo()) {
-            case PLAN -> pasoServicio(sesion, proyecto, salida, herramienta, args, maxReq, haySiguiente);
-            case CIERRE -> textoCierre();
+            case PLAN -> pasoServicio(sesion, proyecto, salida, herramienta, args, maxReq, haySiguiente, hayPaquete);
+            case CIERRE -> textoCierre(sesion);
             case MONTAJE -> trasEstado
                     ? "corrige en el spec " + (uno ? "el caso" : "los " + n + " casos") + " de `corregir` (ids, errores y pistas en el "
                     + "JSON de abajo) y llama ahora a generar_tests {spec, reemplazarCasos: [esos ids]}."
@@ -228,8 +300,9 @@ final class GuiaTanda {
                     : "hay " + n + (uno ? " fallo de aserción" : " fallos de aserción") + " por revisar: llama ahora a "
                     + HerramientaEstadoVerificacion.NOMBRE + " {}; no preguntes al usuario.";
             case PREGUNTA -> p.texto();
-            case ARREGLO -> "fase de arreglo, " + (uno ? "queda 1 caso" : "quedan " + n + " casos") + ": llama ahora a " + EJECUTAR
-                    + " {} (devuelve los casos fallidos del siguiente servicio, con su error, pistas, spec y código) y corrígelos en una "
+            case ARREGLO -> "fase de arreglo, " + (uno ? "queda 1 caso" : "quedan " + n + " casos") + ": llama ahora a "
+                    + BloquesTanda.llamadaEjecutar(sesion)
+                    + " (devuelve los casos fallidos del siguiente servicio, con su error, pistas, spec y código) y corrígelos en una "
                     + "llamada a arreglar_caso.";
         };
     }
@@ -252,14 +325,24 @@ final class GuiaTanda {
         if (c.contains("\"respuestaFinal\":") || c.contains("\nrespuestaFinal:\n")) {
             return null;
         }
+        Integer bloque = sesion.bloqueLlamada();
+        if (c.contains(MARCA_BLOQUE_TERMINADO)) {
+            return lineaBloqueTerminado(bloque, c);
+        }
         boolean propia = c.startsWith("{\"accionRequerida\"");
         boolean haySiguiente = c.contains(MARCA_SIGUIENTE);
+        boolean hayPaquete = c.contains(MARCA_PAQUETE);
         HerramientaEjecutar.Paso paso = HerramientaEjecutar.pasoDetallado(sesion, proyecto, salida, EJECUTAR.equals(herramienta));
         if (paso == null && !propia) {
             return null;
         }
         if (paso != null && paso.tipo() == HerramientaEjecutar.TipoPaso.PREGUNTA) {
             return null;
+        }
+        // Sin ámbito de bloque y con la tanda en bloques: lo pendiente es lanzar (o relanzar) los bloques sin generar.
+        List<Integer> sinGenerar = List.of();
+        if (bloque == null && paso != null && paso.tipo() == HerramientaEjecutar.TipoPaso.PLAN && BloquesTanda.activo(sesion, proyecto)) {
+            sinGenerar = BloquesTanda.sinGenerar(sesion, proyecto);
         }
         String texto;
         boolean conPaso = false;
@@ -268,14 +351,26 @@ final class GuiaTanda {
         } else if (error) {
             texto = "esta llamada ha sido rechazada: haz lo que indica el mensaje de abajo (corrige y repítela, o da antes el paso "
                     + "que pide).";
+        } else if (!sinGenerar.isEmpty()) {
+            texto = "lanza AHORA, en un solo mensaje y todos a la vez, un subagente (herramienta Agent, general-purpose) por cada "
+                    + "bloque con promptTrabajador; NO hagas tú los bloques (solo si no tienes la herramienta Agent o un subagente "
+                    + "falla: tomar_bloque {bloque: id}); cuando vuelvan, ejecutar_tests {}.";
         } else {
-            texto = textoPaso(paso, sesion, proyecto, salida, herramienta, args, MAX_REQUERIDOS, haySiguiente);
+            texto = textoPaso(paso, sesion, proyecto, salida, herramienta, args, MAX_REQUERIDOS, haySiguiente, hayPaquete);
             conPaso = true;
         }
         String pos;
-        if (paso != null && paso.tipo() == HerramientaEjecutar.TipoPaso.ARREGLO) {
-            int[] cu = ArreglosFinal.cuenta(sesion, proyecto);
-            pos = "fase de arreglo: caso " + Math.max(1, cu[0] - cu[1] + 1) + " de " + cu[0];
+        if (!sinGenerar.isEmpty()) {
+            pos = sinGenerar.size() + (sinGenerar.size() == 1 ? " bloque sin generar: " : " bloques sin generar: ")
+                    + BloquesTanda.listaIds(sinGenerar);
+        } else if (paso != null && paso.tipo() == HerramientaEjecutar.TipoPaso.ARREGLO) {
+            Matcher grupoReal = propia ? FASE_ARREGLO_EN_CUERPO.matcher(c.substring(0, Math.min(c.length(), 600))) : null;
+            if (grupoReal != null && grupoReal.find()) {
+                pos = prefijoBloque(sesion) + "fase de arreglo: " + grupoReal.group(1);
+            } else {
+                int[] cu = ArreglosFinal.cuenta(sesion, proyecto);
+                pos = prefijoBloque(sesion) + "fase de arreglo: caso " + Math.max(1, cu[0] - cu[1] + 1) + " de " + cu[0];
+            }
         } else {
             pos = paso != null && paso.tipo() == HerramientaEjecutar.TipoPaso.MONTAJE && paso.fqn() != null
                     ? posicion(sesion, proyecto, paso.fqn()) : posicion(sesion, proyecto);
@@ -288,13 +383,25 @@ final class GuiaTanda {
             }
         }
         String prefijo = PREFIJO + pos + "): ";
-        int libre = MAX_ACCION - LimitesRespuesta.bytes(prefijo) - LimitesRespuesta.bytes(SUFIJO);
+        String sufijo = bloque == null ? SUFIJO : " No escribas ningún mensaje al usuario hasta recibir BLOQUE " + bloque + " TERMINADO.";
+        int libre = MAX_ACCION - LimitesRespuesta.bytes(prefijo) - LimitesRespuesta.bytes(sufijo);
         if (conPaso && LimitesRespuesta.bytes(unaLinea(texto)) > libre) {
-            texto = textoPaso(paso, sesion, proyecto, salida, herramienta, args, REQUERIDOS_CORTO, haySiguiente);
+            texto = textoPaso(paso, sesion, proyecto, salida, herramienta, args, REQUERIDOS_CORTO, haySiguiente, hayPaquete);
         }
         // Última red: el texto ya debería caber.
-        String linea = prefijo + LimitesRespuesta.recortar(unaLinea(texto), Math.max(0, libre)) + SUFIJO;
+        String linea = prefijo + LimitesRespuesta.recortar(unaLinea(texto), Math.max(0, libre)) + sufijo;
         return unaLinea(linea);
+    }
+
+    /** Línea fija de un bloque terminado: sirve al trabajador (termina) y al agente principal (cierra con ejecutar_tests {}). */
+    private static String lineaBloqueTerminado(Integer bloque, String cuerpo) {
+        String b = bloque == null ? null : String.valueOf(bloque);
+        if (b == null) {
+            Matcher m = BLOQUE_EN_CUERPO.matcher(cuerpo);
+            b = m.find() ? m.group(1) : "?";
+        }
+        return "accionRequerida: BLOQUE " + b + " TERMINADO: si eres el trabajador de este bloque, responde solo «BLOQUE " + b
+                + " TERMINADO» y termina; si eres el agente principal, llama ahora a ejecutar_tests {}.";
     }
 
     /**
@@ -322,8 +429,12 @@ final class GuiaTanda {
                 + " cuando toque.";
     }
 
-    private static String textoCierre() {
-        return "llama ahora a " + EJECUTAR + " {} (cierra la tanda; repítela mientras devuelva verificando=true).";
+    private static String textoCierre(SesionMcp sesion) {
+        Integer b = sesion.bloqueLlamada();
+        return b == null
+                ? "llama ahora a " + EJECUTAR + " {} (cierra la tanda; repítela mientras devuelva verificando=true)."
+                : "llama ahora a " + BloquesTanda.llamadaEjecutar(sesion) + " (cierra tu bloque: prueba y arregla sus servicios; "
+                + "repítela mientras devuelva verificando=true).";
     }
 
     private static String unaLinea(String s) {

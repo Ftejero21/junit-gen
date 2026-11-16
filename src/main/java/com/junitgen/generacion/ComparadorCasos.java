@@ -582,7 +582,11 @@ public final class ComparadorCasos {
             }
             String texto = Boolean.TRUE.equals(v.sinInteracciones) || v.llamada == null
                     ? Objects.toString(v.mock, "") : Objects.toString(v.mock, "") + "." + v.llamada;
-            String base = com.junitgen.duplicados.NormalizadorExpresiones.sinEspacios(texto);
+            // Con llamada, la clave usa la forma canónica de los matchers: normalizarlos (any() → any(T.class), eq(x) → x) no cuenta como quitar la comprobación.
+            String base = Boolean.TRUE.equals(v.sinInteracciones) || v.llamada == null
+                    ? com.junitgen.duplicados.NormalizadorExpresiones.sinEspacios(texto)
+                    : com.junitgen.duplicados.NormalizadorExpresiones.sinEspacios(Objects.toString(v.mock, "") + ".")
+                    + com.junitgen.spec.NormalizadorMatchers.clave(v.llamada);
             int n = repeticiones.merge(base, 1, Integer::sum);
             m.put(n == 1 ? base : base + " #" + n, texto);
         }

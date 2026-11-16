@@ -46,29 +46,17 @@ public class HerramientaEstadoVerificacion implements Herramienta {
 
     @Override
     public String descripcion() {
-        return "Consulta ligera (no ejecuta nada) de las pruebas en segundo plano de los tests generados en esta sesión: "
-                + "progreso {serviciosConTests, verificados, verificando, enCola}, corregir [{servicio, intento, reemplazarCasos}] "
-                + "con los casos que no compilan o fallan al montarse, revisar [{servicio, casos}] con los fallos de aserción sin "
-                + "veredicto, reemplazar [{servicio, reemplazarCasos}] con los que ya tienen error_ia registrado, errores por caso "
-                + "(mensaje recortado y `pista` con las firmas reales de constructores y métodos en los que no compilan; en los "
-                + "de aserción también tipo, metodo, motivoIa, intento y su spec; paginado con 'pagina') y "
-                + "apartados.fallosAsercion. Llámala cuando una respuesta traiga la nota «Verificación en segundo plano…»; el "
-                + "rechazo de seleccionar_funciones/detalle_servicio ya trae errores, pistas e ids (no hace falta llamarla antes). "
-                + "Corrige en el spec los casos de 'corregir' (nunca el .java ni el proyecto) y llama a generar_tests (valida el "
-                + "spec) con reemplazarCasos = esos ids (un servicio por llamada): se vuelven a probar solos (máximo 3 intentos; "
-                + "después, o si avanzas con casos aún rotos, junit-gen los aparta solo). Los fallos "
-                + "de aserción los revisas tú, sin preguntar al usuario (no uses ask_user): por cada caso de 'revisar' relee el "
-                + "código con detalle_servicio {clase, metodos} y registra todos los veredictos (error_ia | bug_servicio | dudoso, "
-                + "con motivo basado en el código) en UNA llamada a registrar_analisis_ia; los de 'reemplazar' corrígelos en el "
-                + "spec y generar_tests con reemplazarCasos. Solo con `fallosAsercion: preguntar` en junit-gen.yml se preguntan al "
-                + "usuario al final. No la uses para sondear entre servicios. Con `arreglos: alFinal` (por defecto) solo devuelve "
-                + "progreso y contadores: los fallos se arreglan al final con arreglar_caso.";
+        return "Consulta ligera (no ejecuta nada) de las pruebas en segundo plano: progreso, casos a corregir, fallos de aserción "
+                + "por revisar y errores por caso (paginados con 'pagina'). Llámala si una respuesta trae la nota "
+                + "«Verificación en segundo plano…», no para sondear. Corrige en el spec los casos de 'corregir' (nunca el .java) "
+                + "con generar_tests y reemplazarCasos; los fallos de aserción, con registrar_analisis_ia. Con `arreglos: "
+                + "alFinal` (por defecto) solo da contadores. Sigue accionRequerida.";
     }
 
     @Override
     public ObjectNode esquema() {
         ObjectNode s = Herramienta.esquemaBase();
-        Herramienta.propiedad(s, "rutaProyecto", "string", "Ruta del proyecto analizado (por defecto, el de la sesión; no hace falta).", false);
+        Herramienta.propiedad(s, "rutaProyecto", "string", "Ruta del proyecto; por defecto, la de la sesión.", false);
         Herramienta.propiedad(s, "pagina", "integer", "Página (1..) de la lista de errores.", false);
         ((ObjectNode) s.get("properties").get("pagina")).put("minimum", 1);
         return s;

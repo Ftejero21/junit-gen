@@ -14,6 +14,7 @@ import com.junitgen.util.LimitesRespuesta;
 import com.junitgen.util.Textos;
 import com.junitgen.verificacion.ClasificadorFallos;
 import com.junitgen.verificacion.ResultadoTest;
+import com.junitgen.verificacion.ResultadoVerificacion;
 import com.junitgen.verificacion.VerificadorTests;
 
 import java.nio.file.Path;
@@ -488,6 +489,132 @@ final class ArreglosFinal {
         sesion.verificaciones().encolarArreglo(proyecto, salida, fqn, ids);
     }
 
+    // ------------------------------------------------------------- corrección común transaccional
+
+    /** Casos mostrados como ejemplo y recorte del error de cada uno en el motivo de una corrección común deshecha. */
+    private static final int MAX_ERROR_EJEMPLO = 160;
+
+    /**
+     * Motivo por el que una corrección de la parte común debe deshacerse tras verificar, o null si se mantiene: la clase
+     * ya no compila fuera de los casos, o casos que pasaban antes (y no son los corregidos) ya no pasan.
+     */
+    static String rompeComun(VerificacionesSesion.PuntoComun p, ResultadoVerificacion rv, Set<String> propios) {
+        if (p == null || rv == null || rv.resultados == null) {
+            return null;
+        }
+        for (ResultadoTest t : rv.resultados) {
+            if (t != null && t.errorComun && (t.caso == null || propios == null || propios.contains(t.caso))) {
+                String detalle = unaLinea(t.mensaje == null ? "" : t.mensaje);
+                if (detalle.startsWith(VerificadorTests.PREFIJO_ERROR_COMUN)) {
+                    int k = detalle.indexOf("): ");
+                    detalle = k < 0 ? detalle.substring(VerificadorTests.PREFIJO_ERROR_COMUN.length())
+                            : detalle.substring(k + "): ".length());
+                }
+                String pista = t.pista == null || t.pista.isBlank() ? "" : " " + unaLinea(t.pista);
+                String texto = (detalle.trim() + pista).trim();
+                return LimitesRespuesta.recortar("la clase de test dejó de compilar fuera de los casos: "
+                        + (texto.isEmpty() ? SIN_DETALLE : texto), MAX_ERROR);
+            }
+        }
+        int rotos = 0;
+        String ejemplo = null;
+        for (ResultadoTest t : rv.resultados) {
+            if (t == null || t.caso == null || (propios != null && !propios.contains(t.caso))
+                    || p.idsCorreccion().contains(t.caso)) {
+                continue;
+            }
+            if (ClasificadorFallos.PASA.equals(p.estadosPrevios().get(t.caso)) && !ClasificadorFallos.PASA.equals(t.estado)) {
+                rotos++;
+                if (ejemplo == null) {
+                    String nombre = t.metodoTest != null && !t.metodoTest.isBlank() ? t.metodoTest : t.caso;
+                    ejemplo = nombre + ": " + LimitesRespuesta.recortar(unaLinea(t.mensaje == null ? SIN_DETALLE : t.mensaje),
+                            MAX_ERROR_EJEMPLO);
+                }
+            }
+        }
+        if (rotos == 0) {
+            return null;
+        }
+        return LimitesRespuesta.recortar("rompía " + rotos + (rotos == 1 ? " caso que pasaba" : " casos que pasaban")
+                + ", p. ej. " + ejemplo, MAX_ERROR);
+    }
+
+    /**
+     * Deshace una corrección de la parte común (nunca lanza): restaura el archivo de test y la entrada del servicio en
+     * spec.json, vuelve a registrar los estados previos, deja el motivo en los casos corregidos y guarda la tanda.
+     * Devuelve true si quedó deshecha (el llamador reverifica el servicio).
+     */
+    static boolean deshacerComun(SesionMcp sesion, Path proyecto, Path salida, String fqn, VerificacionesSesion.PuntoComun p,
+                                 String motivo) {
+        if (sesion == null || proyecto == null || salida == null || fqn == null || p == null || p.archivoTest() == null
+                || p.textoPrevio() == null || p.servicioPrevio() == null) {
+            return false;
+        }
+        try {
+            com.junitgen.seguridad.EscritorSeguro esc = new com.junitgen.seguridad.EscritorSeguro(proyecto, salida);
+            Boolean restaurado = com.junitgen.seguridad.BloqueosSalida.conEscritura(esc.salida(), () -> {
+                Spec spec = AlmacenSpec.leer(esc.salida());
+                if (spec == null || spec.servicios == null) {
+                    return Boolean.FALSE;
+                }
+                ServicioSpec previo;
+                try {
+                    previo = Json.MAPPER.treeToValue(p.servicioPrevio(), ServicioSpec.class);
+                } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                    System.err.println("junit-gen: no se pudo leer la entrada guardada de " + fqn + ": " + e.getClass().getSimpleName());
+                    return Boolean.FALSE;
+                }
+                int pos = -1;
+                for (int i = 0; i < spec.servicios.size(); i++) {
+                    ServicioSpec s = spec.servicios.get(i);
+                    if (s != null && fqn.equals(s.clase) && Objects.equals(s.modulo, previo.modulo)) {
+                        pos = i;
+                        break;
+                    }
+                }
+                if (pos < 0) {
+                    return Boolean.FALSE;
+                }
+                spec.servicios.set(pos, previo);
+                Map<Path, String> plan = new LinkedHashMap<>();
+                plan.put(p.archivoTest(), p.textoPrevio());
+                plan.put(AlmacenSpec.ruta(esc.salida()), AlmacenSpec.serializar(spec));
+                esc.escribirTodo(plan);
+                return Boolean.TRUE;
+            });
+            if (!Boolean.TRUE.equals(restaurado)) {
+                return false;
+            }
+            sesion.registrarEstados(salida, p.estadosPrevios());
+            String frase = LimitesRespuesta.recortar("Tu cambio de `servicio` (parte común) se ha deshecho: " + unaLinea(motivo)
+                    + ". No lo repitas: cambia solo este caso (datos/preparacion; un campo sin setter se fija por reflexión sobre la "
+                    + "instancia) o usa en `servicio` métodos que existan.", MAX_ERROR + MAX_PISTA);
+            String cambio = LimitesRespuesta.recortar("Corrección de la parte común deshecha: " + unaLinea(motivo), MAX_ERROR);
+            for (String id : p.idsCorreccion()) {
+                sesion.actualizarArreglo(proyecto, id, a -> {
+                    if (a == null) {
+                        return null;
+                    }
+                    a.correccionDeshecha = frase;
+                    List<String> todos = new ArrayList<>(a.cambios == null ? List.of() : a.cambios);
+                    if (!todos.contains(cambio)) {
+                        todos.add(cambio);
+                    }
+                    while (todos.size() > MAX_CAMBIOS) {
+                        todos.remove(0);
+                    }
+                    a.cambios = todos;
+                    return a;
+                });
+            }
+            sesion.guardarTanda(proyecto, salida, Boolean.FALSE);
+            return true;
+        } catch (RuntimeException e) {
+            System.err.println("junit-gen: no se pudo deshacer la corrección común de " + fqn + ": " + e.getClass().getSimpleName());
+            return false;
+        }
+    }
+
     // ------------------------------------------------------------- respuestas
 
     /**
@@ -515,7 +642,7 @@ final class ArreglosFinal {
                 if (!sesion.verificaciones().esperarInactiva(salida, HerramientaEjecutar.restoEspera(sesion))) {
                     ObjectNode r = Json.objeto();
                     r.put("accionRequerida", HerramientaEjecutar.ACCION_PENDIENTE_IA + "junit-gen está aplicando y probando "
-                            + "correcciones automáticas: llama ahora a ejecutar_tests {}.");
+                            + "correcciones automáticas: llama ahora a " + BloquesTanda.llamadaEjecutar(sesion) + ".");
                     r.put("verificando", true);
                     if (anterior != null) {
                         r.set("resultadoAnterior", anterior);
@@ -541,6 +668,11 @@ final class ArreglosFinal {
         }
         if (anterior == null) {
             return null;
+        }
+        Integer bloque = sesion.bloqueLlamada();
+        if (bloque != null && sesion.ambito(proyecto) != null) {
+            // Dentro de un bloque no hay respuestaFinal: el bloque queda terminado.
+            return BloquesTanda.nodoTerminado(sesion, proyecto, salida, bloque, anterior);
         }
         ObjectNode r = Json.objeto();
         r.put("accionRequerida", HerramientaEjecutar.ACCION_PENDIENTE_IA + "No quedan casos por arreglar: llama ahora a "
@@ -723,7 +855,7 @@ final class ArreglosFinal {
         ObjectNode d0 = null;
         if (a.servicio != null && !metodos.isEmpty()) {
             try {
-                PaqueteTrabajo.Opciones op = opcionesPaquete(metodos, modulo, LimitesRespuesta.TOPE_PRESUPUESTO_PAQUETE, false);
+                PaqueteTrabajo.Opciones op = opcionesPaquete(metodos, modulo, LimitesRespuesta.TOPE_PRESUPUESTO_PAQUETE, true);
                 d0 = HerramientaDetalle.paquete(sesion, proyecto, null, a.servicio, op);
             } catch (RuntimeException e) {
                 System.err.println("junit-gen: no se pudo analizar el código del caso " + id + " para las pistas: "
@@ -874,6 +1006,7 @@ final class ArreglosFinal {
         caso.put("intento", Math.min(a.intentos + 1, VerificadorTests.MAX_INTENTOS));
         ponerSiHay(caso, "error", a.error);
         ponerSiHay(caso, "pista", a.pista);
+        ponerSiHay(caso, "correccionDeshecha", a.correccionDeshecha);
         List<String> pistas = PistasArreglo.de(a, c, paquete);
         if (!pistas.isEmpty()) {
             ArrayNode p = caso.putArray("pistas");

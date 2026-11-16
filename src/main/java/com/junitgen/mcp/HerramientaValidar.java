@@ -28,21 +28,20 @@ public class HerramientaValidar implements Herramienta {
 
     @Override
     public String descripcion() {
-        return "Valida el spec JSON contra el proyecto escaneado: estructura, métodos, dependencias, compatibilidad con la "
-                + "versión de Java y de las librerías, tipos resolubles y duplicados por huella en 3 niveles (tests del "
-                + "proyecto, dentro del spec y generados antes en carpetaSalida). Opcional: generar_tests valida igual.";
+        return "Valida el spec contra el proyecto (estructura, tipos, versiones y duplicados) sin escribir nada. Opcional: "
+                + "generar_tests valida igual.";
     }
 
     @Override
     public ObjectNode esquema() {
         ObjectNode s = Herramienta.esquemaBase();
         ObjectNode props = (ObjectNode) s.get("properties");
-        ObjectNode spec = Recursos.esquemaSpec();
-        spec.put("description", "Spec JSON v1 (objeto, o cadena con el JSON).");
-        props.set("spec", spec);
-        Herramienta.propiedad(s, "rutaSpec", "string", "Alternativa: ruta de un archivo con el spec.", false);
-        Herramienta.propiedad(s, "ruta", "string", "Ruta del proyecto (por defecto proyecto.ruta del spec o el último escaneo).", false);
-        Herramienta.propiedad(s, "carpetaSalida", "string", "Carpeta de salida (nivel 3 de duplicados); por defecto, la elegida en la sesión.", false);
+        ObjectNode spec = props.putObject("spec");
+        spec.put("type", "object");
+        spec.put("description", "El mismo spec que generar_tests.");
+        Herramienta.propiedad(s, "rutaSpec", "string", "Alternativa: archivo con el spec.", false);
+        Herramienta.propiedad(s, "ruta", "string", "Ruta del proyecto (por defecto, la de la sesión).", false);
+        Herramienta.propiedad(s, "carpetaSalida", "string", "Carpeta de salida; por defecto, la de la sesión.", false);
         return s;
     }
 

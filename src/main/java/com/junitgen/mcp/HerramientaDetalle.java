@@ -27,46 +27,27 @@ public class HerramientaDetalle implements Herramienta {
 
     @Override
     public String descripcion() {
-        return "Tras seleccionar_funciones NO la llames salvo que paginacion.siguiente no sea null. Con `paquete` (1 o 2) devuelve "
-                + "el paquete de trabajo del servicio (funciones elegidas, métodos de la clase que llaman, tipos, helpers externos y "
-                + "montaje). Sin `paquete`: zoom bajo demanda (`metodos`, `tipos`, `desde`, `parteCuerpo`). "
-                + "Devuelve un servicio (solo lectura) por tramos de métodos: con desde=1, la cabecera (montaje, dependencias y cómo "
-                + "se obtienen, versiones, restricciones de Java, tests emparejados, seleccion y plantillaSpec); en cada tramo, "
-                + "SOLO las funciones elegidas con seleccionar_funciones (o por el usuario; sin elección, selección automática de "
-                + "junit-gen; con `todas`, el 100 %) "
-                + "con firma, cuerpo compactado (sin comentarios ni logs), estado, maxCasos (máximo de casos de la función: nunca lo "
-                + "superes), casos existentes del proyecto (casosExistentes, si existen), casos ya generados en la salida de la "
-                + "sesión (casosGeneradosEnSalida, si existen; escribe solo escenarios distintos de ambos), casosPlan {previstos, "
-                + "faltan} si hay plan, llama (dep.metodo usados), sus métodos internos, stubsTipicos, sus tipos auxiliares "
-                + "resumidos (modo/crear/setters = cómo instanciarlos) y, en la cabecera, recetas aprendidas. Tras "
-                + "seleccionar_funciones con funciones solo hace falta para paginacion.siguiente. junit-gen rechaza casos sobre "
-                + "funciones no listadas. Cada caso nuevo lleva queHaceOriginal y queComprueba (1 frase, máx. 160 caracteres). "
-                + "Las páginas con desde > 1 solo traen clase, métodos, internos, tipos y paginacion. Si paginacion.siguiente "
-                + "no es null, vuelve a llamar con esos argumentos exactos hasta recorrer todos los métodos (puedes generar el spec "
-                + "tramo a tramo). Cuerpos muy largos: por partes (parteCuerpo). Para ver un tipo auxiliar completo: "
-                + "'tipos'; un método interno completo: 'metodos'. Usa el último escaneo de la sesión (o la carpeta abierta en el "
-                + "IDE, o el directorio de trabajo) si no se indica 'ruta'. 'clase' admite el nombre simple: se busca en todos los "
-                + "módulos y, si es ambiguo, se usa el módulo deducido de los servicios pedidos en escanear_proyecto.";
+        return "Zoom de un servicio (solo lectura). Tras seleccionar_funciones solo llámala si paginacion.siguiente no es null "
+                + "(repítela con esos argumentos exactos) o para ver más: `metodos` (completos), `tipos` (auxiliares), `parteCuerpo` "
+                + "(cuerpos largos). Con `paquete` (1 o 2) devuelve el paquete de trabajo. Trae firma, cuerpo compactado, estado, "
+                + "maxCasos (nunca lo superes), casosExistentes y casosGeneradosEnSalida (escribe solo escenarios distintos), "
+                + "casosPlan, montaje, plantillaSpec y recetas. Cada caso nuevo: queHaceOriginal una vez por función y queComprueba "
+                + "en cada caso. Sigue accionRequerida.";
     }
 
     @Override
     public ObjectNode esquema() {
         ObjectNode s = Herramienta.esquemaBase();
-        Herramienta.propiedad(s, "clase", "string", "FQN del servicio o nombre simple (se desambigua con el módulo de trabajo de la sesión).", true);
-        Herramienta.propiedad(s, "ruta", "string", "Ruta del proyecto (por defecto, la del último escaneo o la carpeta abierta en el IDE).", false);
+        Herramienta.propiedad(s, "clase", "string", "FQN o nombre simple del servicio.", true);
+        Herramienta.propiedad(s, "ruta", "string", "Ruta del proyecto; por defecto, la del último escaneo.", false);
         Herramienta.propiedad(s, "modulo", "string", "Módulo, si la clase existe en varios.", false);
-        Herramienta.propiedad(s, "metodos", "array", "Limitar a estos métodos (nombre o clave nombre(Tipos)); admite también no "
-                + "públicos y no seleccionados (marcados seleccionada:false con su motivo). En un plan, omítelo y recorre todas "
-                + "las páginas.", false);
-        Herramienta.propiedad(s, "desde", "integer", "Primer método del tramo (1-based, por defecto 1): usa el de paginacion.siguiente.", false);
+        Herramienta.propiedad(s, "metodos", "array", "Solo estos métodos (nombre o nombre(Tipos)), incluidos no seleccionados.", false);
+        Herramienta.propiedad(s, "desde", "integer", "Primer método del tramo (1-based): el de paginacion.siguiente.", false);
         ((ObjectNode) s.get("properties").get("desde")).put("minimum", 1);
-        Herramienta.propiedad(s, "tipos", "array", "Solo estos tipos auxiliares completos (FQN o nombre simple), paginados.", false);
-        Herramienta.propiedad(s, "parteCuerpo", "integer", "Parte del cuerpo del método 'desde' (cuerpos largos): usa la de "
-                + "paginacion.siguiente.", false);
+        Herramienta.propiedad(s, "tipos", "array", "Tipos auxiliares completos (FQN o nombre simple), paginados.", false);
+        Herramienta.propiedad(s, "parteCuerpo", "integer", "Parte del cuerpo del método 'desde': la de paginacion.siguiente.", false);
         ((ObjectNode) s.get("properties").get("parteCuerpo")).put("minimum", 1);
-        Herramienta.propiedad(s, "paquete", "integer", "Página del paquete de trabajo del servicio (1 o 2): usa la de "
-                + "paginacion.siguiente. Con `todas`, funciones nombradas por el usuario o selección guardada, empieza con paquete: 1.",
-                false);
+        Herramienta.propiedad(s, "paquete", "integer", "Página del paquete de trabajo (1 o 2): la de paginacion.siguiente.", false);
         ((ObjectNode) s.get("properties").get("paquete")).put("minimum", 1).put("maximum", PaqueteTrabajo.MAX_PAGINAS);
         return s;
     }
@@ -173,7 +154,23 @@ public class HerramientaDetalle implements Herramienta {
         }
         int presupuesto = presupuestoPaquete(args, sesion);
         op.presupuesto = pagina == 2 ? Math.min(presupuesto, LimitesRespuesta.segundaPaginaPaquete()) : presupuesto;
-        return new Resultado(Json.compacto(paquete(sesion, base, ruta, clase, op)), false);
+        // En un bloque, la misma lista de tipos que vio la página 1 del servicio (el cursor de la página 2 depende de ella).
+        Integer bloque = sesion.bloqueLlamada();
+        boolean sinRepetirTipos = bloque != null && base != null && op.metodos.isEmpty();
+        if (sinRepetirTipos) {
+            String fqn;
+            try {
+                fqn = sesion.fachada().localizarClase(clase, ruta, op.modulo, sesion.modulosTrabajo(base)).clase().fqn;
+            } catch (RuntimeException e) {
+                fqn = clase;
+            }
+            op.tiposYaEnviados = sesion.tiposPreviosDelServicio(base, bloque, fqn);
+        }
+        ObjectNode d = paquete(sesion, base, ruta, clase, op);
+        if (sinRepetirTipos) {
+            BloquesTanda.registrarTiposEnviados(sesion, base, bloque, d);
+        }
+        return new Resultado(Json.compacto(d), false);
     }
 
     /**
@@ -182,13 +179,23 @@ public class HerramientaDetalle implements Herramienta {
      * presupuesto, la página y el cursor los fija el llamador) y llama a la fachada.
      */
     static ObjectNode paquete(SesionMcp sesion, Path base, Path ruta, String clase, PaqueteTrabajo.Opciones op) {
+        return paquete(sesion, base, ruta, clase, op, null);
+    }
+
+    /**
+     * Como {@link #paquete(SesionMcp, Path, Path, String, PaqueteTrabajo.Opciones)}; {@code plantillaCompleta} no nulo
+     * sustituye al cálculo por defecto (esqueleto de caso solo en el primer servicio de la sesión).
+     */
+    static ObjectNode paquete(SesionMcp sesion, Path base, Path ruta, String clase, PaqueteTrabajo.Opciones op,
+                              Boolean plantillaCompleta) {
         op.todas = sesion.todas(base);
         op.selecciones = sesion.selecciones(base);
         for (SesionMcp.EstadoMetodo m : sesion.estadoPlan(base)) {
             op.casosPlan.put(m.fqn() + "#" + m.metodo(), new int[]{m.previstos(), m.faltan()});
         }
         Path salida = sesion.salidaDe(base);
-        op.plantillaCompleta = salida == null || sesion.casosDeSesion(salida).isEmpty();
+        op.plantillaCompleta = plantillaCompleta != null ? plantillaCompleta
+                : salida == null || sesion.casosDeSesion(salida).isEmpty();
         op.hayPagina2 = LimitesRespuesta.segundaPaginaPaquete() >= PaqueteTrabajo.MIN_PAGINA;
         return sesion.fachada().paquete(clase, ruta, op.modulo, sesion.modulosTrabajo(base), salida, op);
     }

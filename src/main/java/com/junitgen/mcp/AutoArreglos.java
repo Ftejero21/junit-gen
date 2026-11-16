@@ -3,21 +3,14 @@ package com.junitgen.mcp;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.github.javaparser.ParseResult;
-import com.github.javaparser.ast.NodeList;
-import com.github.javaparser.ast.expr.CastExpr;
-import com.github.javaparser.ast.expr.Expression;
-import com.github.javaparser.ast.expr.FieldAccessExpr;
-import com.github.javaparser.ast.expr.MethodCallExpr;
-import com.github.javaparser.ast.expr.NameExpr;
 import com.junitgen.Fachada;
 import com.junitgen.duplicados.NormalizadorExpresiones;
-import com.junitgen.escaneo.IndiceTipos;
 import com.junitgen.generacion.AlmacenSpec;
 import com.junitgen.generacion.ResultadoGeneracion;
 import com.junitgen.generacion.Tanda;
 import com.junitgen.spec.CasoSpec;
 import com.junitgen.spec.DatoSpec;
+import com.junitgen.spec.NormalizadorMatchers;
 import com.junitgen.spec.ServicioSpec;
 import com.junitgen.spec.Spec;
 import com.junitgen.spec.StubSpec;
@@ -35,16 +28,19 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * Arreglos mecánicos sin IA de la fase de arreglo, antes de entregar nada: R1 matchers mezclados con valores →
  * {@code eq(valor)}; R2 stub innecesario → se quita; R3 argumento que llama a un auxiliar inexistente habiendo un único
- * dato del tipo del parámetro → ese dato. Solo para {@code no_compila}/{@code error_montaje} no comunes y no protegidos;
- * nunca tocan {@code esperado}, {@code aserciones} ni {@code verificaciones}. Nunca lanzan hacia fuera.
+ * dato del tipo del parámetro → ese dato; R4 matchers tipados con la firma real (por reflexión); R5 argumento real null
+ * frente a un matcher de tipo → {@code nullable(T.class)}. Solo para {@code no_compila}/{@code error_montaje} no comunes y
+ * no protegidos; nunca tocan {@code esperado}, {@code aserciones} ni quitan verificaciones. Nunca lanzan hacia fuera.
  */
 final class AutoArreglos {
 
@@ -53,16 +49,9 @@ final class AutoArreglos {
     }
 
     /** Matchers de Mockito reconocidos. */
-    static final Set<String> MATCHERS = Set.of("any", "anyBoolean", "anyByte", "anyChar", "anyCollection", "anyDouble", "anyFloat",
-            "anyInt", "anyIterable", "anyList", "anyLong", "anyMap", "anySet", "anyShort", "anyString", "argThat", "booleanThat",
-            "byteThat", "charThat", "contains", "doubleThat", "endsWith", "eq", "floatThat", "intThat", "isA", "isNotNull", "isNull",
-            "longThat", "matches", "notNull", "nullable", "refEq", "same", "shortThat", "startsWith", "and", "or", "not", "gt", "geq",
-            "lt", "leq");
+    static final Set<String> MATCHERS = NormalizadorMatchers.MATCHERS;
     /** Clases cuyo método estático es un matcher. */
-    static final Set<String> SCOPES_MATCHERS = Set.of("ArgumentMatchers", "Mockito", "Matchers", "BDDMockito", "AdditionalMatchers");
-    private static final String CAPTURE = "capture";
-    private static final String EQ = "eq";
-    private static final String RECEPTOR = "x";
+    static final Set<String> SCOPES_MATCHERS = NormalizadorMatchers.SCOPES_MATCHERS;
     private static final String UNNECESSARY = "UnnecessaryStubbingException";
     private static final String UNNECESSARY_MENSAJE = "Unnecessary stubbings detected";
     private static final Pattern LINEA_STUB = Pattern.compile("->\\s*at\\s+[\\w.$]+\\.(\\w+)\\(([\\w$]+)\\.java:(\\d+)\\)");
@@ -79,17 +68,41 @@ final class AutoArreglos {
      * elegible. Nunca lanza.
      */
     static Propuesta proponer(Tanda.ArregloTanda a, CasoSpec c, ResultadoTest ultimo, Path salida) {
+        return proponer(a, c, ultimo, salida, null);
+    }
+
+    /**
+     * Como {@link #proponer(Tanda.ArregloTanda, CasoSpec, ResultadoTest, Path)}; con {@code tipador} (R4/R5: matchers con la
+     * firma real y {@code nullable} frente a un argumento real null; modifica el spec y devuelve sus frases) se aplica entre
+     * R2 y R1. Ninguna propuesta cambia {@code esperado}, {@code aserciones} ni quita verificaciones.
+     */
+    static Propuesta proponer(Tanda.ArregloTanda a, CasoSpec c, ResultadoTest ultimo, Path salida,
+                              Function<ObjectNode, List<String>> tipador) {
         if (a == null || c == null || a.comun || c.protegido()
                 || !(ClasificadorFallos.NO_COMPILA.equals(a.tipo) || ClasificadorFallos.ERROR_MONTAJE.equals(a.tipo))) {
             return null;
         }
         try {
             ObjectNode spec = HerramientaEstadoVerificacion.specLimpio(c);
+            ObjectNode original = spec.deepCopy();
             List<String> frases = new ArrayList<>();
             auxiliar(spec, a, c, frases);
             stubInnecesario(spec, a, c, ultimo, salida, frases);
+            if (tipador != null) {
+                List<String> tipadas = tipador.apply(spec);
+                if (tipadas != null) {
+                    frases.addAll(tipadas);
+                }
+            }
             matchers(spec, frases);
-            return frases.isEmpty() ? null : new Propuesta(spec, frases);
+            if (frases.isEmpty()) {
+                return null;
+            }
+            if (!sinDebilitar(original, spec)) {
+                System.err.println("junit-gen: corrección automática descartada en " + a.caso + ": debilitaba el test.");
+                return null;
+            }
+            return new Propuesta(spec, frases);
         } catch (RuntimeException e) {
             System.err.println("junit-gen: corrección automática no aplicable al caso " + a.caso + ": " + e.getClass().getSimpleName()
                     + ": " + e.getMessage());
@@ -121,7 +134,8 @@ final class AutoArreglos {
                 if (u == null || u.caso() == null || u.servicio() == null || (servicio != null && servicio != u.servicio())) {
                     continue;
                 }
-                Propuesta p = proponer(a, u.caso(), sesion.verificaciones().ultimo(salida, a.caso), salida);
+                Propuesta p = proponer(a, u.caso(), sesion.verificaciones().ultimo(salida, a.caso), salida,
+                        s -> sesion.fachada().tiparMatchers(proyecto, salida, fqn, s, sesion.verificaciones().ultimo(salida, a.caso)));
                 if (p == null) {
                     continue;
                 }
@@ -435,56 +449,36 @@ final class AutoArreglos {
 
     /** Llamada con los valores envueltos en {@code eq(…)} si mezcla matchers y valores; null si no parsea o no aplica. */
     private static String conEq(String llamada) {
-        if (llamada == null || llamada.isBlank()) {
-            return null;
-        }
-        ParseResult<Expression> pr = IndiceTipos.parser().parseExpression(RECEPTOR + "." + llamada.trim());
-        if (!pr.isSuccessful() || pr.getResult().isEmpty() || !(pr.getResult().get() instanceof MethodCallExpr mc)) {
-            return null;
-        }
-        NodeList<Expression> args = mc.getArguments();
-        int matchers = 0;
-        int valores = 0;
-        for (Expression e : args) {
-            if (esMatcher(e)) {
-                matchers++;
-            } else {
-                valores++;
-            }
-        }
-        if (matchers == 0 || valores == 0) {
-            return null;
-        }
-        for (int i = 0; i < args.size(); i++) {
-            Expression e = args.get(i);
-            if (!esMatcher(e)) {
-                args.set(i, new MethodCallExpr(null, EQ, new NodeList<>(e.clone())));
-            }
-        }
-        String texto = mc.toString();
-        String prefijo = RECEPTOR + ".";
-        return texto.startsWith(prefijo) ? texto.substring(prefijo.length()) : null;
+        return NormalizadorMatchers.conEq(llamada);
     }
 
-    private static boolean esMatcher(Expression e) {
-        if (e instanceof CastExpr ce) {
-            return esMatcher(ce.getExpression());
-        }
-        if (!(e instanceof MethodCallExpr m)) {
+    // ------------------------------------------------------------- guardia: nunca se debilita el test
+
+    /**
+     * true si la propuesta mantiene intactos {@code esperado} y {@code aserciones} y las verificaciones (mismo número, mismo
+     * mock, veces y sinInteracciones): los autoarreglos solo tocan stubs y llamadas.
+     */
+    static boolean sinDebilitar(ObjectNode original, ObjectNode propuesta) {
+        if (original == null || propuesta == null) {
             return false;
         }
-        String nombre = m.getNameAsString();
-        if (CAPTURE.equals(nombre) && m.getScope().isPresent()) {
-            return true;
+        for (String campo : List.of("esperado", "aserciones")) {
+            if (!Objects.equals(original.get(campo), propuesta.get(campo))) {
+                return false;
+            }
         }
-        if (!MATCHERS.contains(nombre)) {
+        JsonNode vo = original.path("verificaciones");
+        JsonNode vp = propuesta.path("verificaciones");
+        if (vo.size() != vp.size()) {
             return false;
         }
-        if (m.getScope().isEmpty()) {
-            return true;
+        for (int i = 0; i < vo.size(); i++) {
+            for (String campo : List.of("mock", "veces", "sinInteracciones")) {
+                if (!Objects.equals(vo.get(i).get(campo), vp.get(i).get(campo))) {
+                    return false;
+                }
+            }
         }
-        Expression s = m.getScope().get();
-        String ultimo = s instanceof NameExpr n ? n.getNameAsString() : s instanceof FieldAccessExpr f ? f.getNameAsString() : null;
-        return ultimo != null && SCOPES_MATCHERS.contains(ultimo);
+        return true;
     }
 }
