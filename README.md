@@ -84,15 +84,7 @@ junit-gen es una **aplicación Java** que analiza tu proyecto y **genera ella mi
 
 Mismo proyecto real (Spring Boot, 2 módulos), mismos servicios y tres modelos (Claude Haiku, Sonnet y Opus 5.5, esfuerzo alto, Claude Code CLI). «Solo IA» = pedirle a la IA que escriba, compile y arregle los tests por su cuenta.
 
-![junit-gen frente a la IA sola con Haiku, Sonnet y Opus 5.5: tiempo, tokens y coste con 5, 15 y 25 servicios](docs/img/comparativa.svg)
-
-**junit-gen frente a la IA sola** (mismo modelo en las dos columnas):
-
-| Modelo | 5 servicios | 15 servicios | 25 servicios |
-|---|---|---|---|
-| Haiku 5.5 | 1,4× más rápido · −60 % tokens | 2,7× · −73 % tokens · −81 % coste | 2,1× · −64 % tokens · −75 % coste |
-| **Sonnet 5.5** | **2,5× · −49 % tokens · −31 % coste** | **3,8× · −67 % tokens · −40 % coste** | **3,1× · −72 % tokens · −32 % coste** |
-| Opus 5.5 | 1,2× · −42 % tokens · −6 % coste | 1,8× · −61 % tokens · −20 % coste | 1,9× · −60 % tokens · −16 % coste |
+![¿Cuánto ahorra junit-gen? Tiempo, tokens, coste y tests que pasan con Sonnet, Haiku y Opus 5.5 para 5, 15 y 25 servicios, IA sola frente a junit-gen](docs/img/comparativa-tabla.svg)
 
 Con 25 servicios, la tanda completa tarda **4 min 38 s con Sonnet + junit-gen**, frente a 12–17 min de cualquier modelo trabajando solo. En todas las ejecuciones los tests que entrega junit-gen compilan y pasan, y junit-gen no tocó ni un archivo del proyecto; las IAs solas, en cambio, modificaron, apartaron o sobrescribieron tests que ya existían. La IA sola escribe más tests por servicio (junit-gen limita los casos por función y descarta duplicados). Los resultados varían entre ejecuciones y dependen del proyecto.
 
