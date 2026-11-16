@@ -39,7 +39,7 @@
         "properties": {
           "clase": {"type": "string", "description": "FQN del servicio (tal como lo devuelve escanear_proyecto)."},
           "modulo": {"type": ["string", "null"], "description": "Opcional. Módulo (ruta relativa o nombre) del servicio; solo necesario si la misma clase existe en varios módulos."},
-          "claseTest": {"type": ["string", "null"], "description": "Nombre simple de la clase de test; null = <Servicio>Test (o <Servicio>GeneradoTest si ya existe)."},
+          "claseTest": {"type": ["string", "null"], "description": "Nombre simple de la clase de test; null = <Servicio>Test; si el proyecto ya tiene ese test: copia ampliada con el mismo nombre o, si no se puede mezclar, <Servicio>GeneradoTest."},
           "seleccion": {
             "type": "object",
             "additionalProperties": false,

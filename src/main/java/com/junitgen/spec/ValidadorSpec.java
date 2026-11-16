@@ -28,11 +28,17 @@ import com.junitgen.escaneo.ProyectoEscaneado;
 import com.junitgen.escaneo.SeleccionFunciones;
 import com.junitgen.generacion.AlmacenSpec;
 import com.junitgen.generacion.CatalogoClases;
+import com.junitgen.generacion.CopiaAmpliada;
 import com.junitgen.generacion.PerfilPlantilla;
 import com.junitgen.generacion.ResolutorImports;
+import com.junitgen.generacion.RutasSalida;
 import com.junitgen.util.Textos;
 import com.junitgen.verificacion.PreparadorModulos;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -337,7 +343,14 @@ public final class ValidadorSpec {
         }
         if (sv.claseTest == null) {
             String base = clase.simple + "Test";
-            sv.claseTest = me.indice.get(prefijo(clase.paquete) + base) != null ? clase.simple + "GeneradoTest" : base;
+            InfoClase existente = me.indice.get(prefijo(clase.paquete) + base);
+            if (existente == null) {
+                sv.claseTest = base;
+            } else {
+                sv.testExistente = existente;
+                sv.copiaAmpliada = existeCopiaAmpliada(me, clase, base);
+                sv.claseTest = sv.copiaAmpliada ? base : clase.simple + "GeneradoTest";
+            }
         }
         if (s.imports != null) {
             if (s.imports.size() > 100) {
@@ -449,6 +462,20 @@ public final class ValidadorSpec {
 
     private static String prefijo(String paquete) {
         return paquete.isEmpty() ? "" : paquete + ".";
+    }
+
+    /** true si la salida ya tiene la copia ampliada {@code base}.java del test existente (solo lee la salida). */
+    private boolean existeCopiaAmpliada(ModuloEscaneado me, InfoClase clase, String base) {
+        if (salida == null) {
+            return false;
+        }
+        try {
+            Path f = RutasSalida.archivoTest(salida, me, clase, base);
+            return Files.isRegularFile(f, LinkOption.NOFOLLOW_LINKS)
+                    && CopiaAmpliada.es(Files.readString(f, StandardCharsets.UTF_8));
+        } catch (IOException | RuntimeException e) {
+            return false;
+        }
     }
 
     /**

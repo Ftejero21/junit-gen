@@ -58,10 +58,19 @@ public class PlantillaTest {
     private final PerfilPlantilla p;
     private final ResultadoValidacion.ServicioValidado sv;
     private final String sut;
+    /** Plan de mezcla con el test existente del usuario (copia ampliada); null = test generado entero. */
+    private final PlanMezcla mezcla;
+    /** Nombres de junit-gen → nombres de los campos del test del usuario (solo en mezcla; sin identidades). */
+    private final Map<String, String> renombres = new LinkedHashMap<>();
 
     public PlantillaTest(PerfilPlantilla p, ResultadoValidacion.ServicioValidado sv) {
+        this(p, sv, null);
+    }
+
+    public PlantillaTest(PerfilPlantilla p, ResultadoValidacion.ServicioValidado sv, PlanMezcla mezcla) {
         this.p = p;
         this.sv = sv;
+        this.mezcla = mezcla;
         String nombre = p.nombreSut;
         for (Dependencia d : sv.mocks()) {
             if (d.nombre.equals(nombre)) {
@@ -72,6 +81,16 @@ public class PlantillaTest {
             nombre = "sut";
         }
         this.sut = nombre;
+        if (mezcla != null) {
+            for (Map.Entry<String, String> e : mezcla.alias.entrySet()) {
+                if (!e.getKey().equals(e.getValue())) {
+                    renombres.put(e.getKey(), e.getValue());
+                }
+            }
+            if (mezcla.campoSut != null && !sut.equals(mezcla.campoSut)) {
+                renombres.put(sut, mezcla.campoSut);
+            }
+        }
     }
 
     public String nombreSut() {
@@ -277,6 +296,10 @@ public class PlantillaTest {
         }
         l.add("}");
         String metodoTexto = String.join("\n", l);
+        if (!renombres.isEmpty()) {
+            metodoTexto = PlanMezcla.renombrar(metodoTexto, renombres);
+            l = new ArrayList<>(List.of(metodoTexto.split("\n", -1)));
+        }
         String contenido = Textos.sha256Hex(metodoTexto, 16);
         StringBuilder bloque = new StringBuilder();
         bloque.append(IND).append("// junit-gen:caso-inicio id=").append(c.id).append(" huella=").append(cv.huella.completa)
@@ -927,6 +950,9 @@ public class PlantillaTest {
     }
 
     public String hashMontaje() {
+        if (mezcla != null) {
+            return CopiaAmpliada.HASH_MONTAJE;
+        }
         List<String> l = montaje(new TreeSet<>());
         return Textos.sha256Hex(p.nombre() + "|" + String.join("\n", l) + "|" + necesitaInyectar()
                 + (necesitaInvocar() ? "|invocar" : ""), 16);
@@ -935,6 +961,14 @@ public class PlantillaTest {
     /** Imports base del archivo (plantilla + tipos del spec). */
     public Set<String> importsArchivo(List<Bloque> casos) {
         Set<String> imports = new TreeSet<>();
+        if (mezcla != null) {
+            imports.add(p.junit == 5 ? "org.junit.jupiter.api.Test" : "org.junit.Test");
+            for (Bloque b : casos) {
+                imports.addAll(b.imports());
+            }
+            anadirImportsSpec(imports);
+            return imports;
+        }
         montaje(imports);
         imports.add(p.junit == 5 ? "org.junit.jupiter.api.Test" : "org.junit.Test");
         if (p.extension) {
@@ -954,7 +988,12 @@ public class PlantillaTest {
         for (Bloque b : casos) {
             imports.addAll(b.imports());
         }
-        // Tipos del spec: un FQN nuevo cuyo nombre simple ya está importado (plantilla o bloques) se omite.
+        anadirImportsSpec(imports);
+        return imports;
+    }
+
+    /** Tipos del spec: un FQN nuevo cuyo nombre simple ya está importado (plantilla o bloques) se omite. */
+    private void anadirImportsSpec(Set<String> imports) {
         for (String fqn : sv.imports.values()) {
             if (fqn == null || fqn.isEmpty()) {
                 continue;
@@ -963,7 +1002,62 @@ public class PlantillaTest {
                 imports.add(fqn);
             }
         }
-        return imports;
+    }
+
+    /**
+     * Motivo por el que el montaje de junit-gen para este servicio no se reduce a «servicio con sus mocks» (lo único
+     * que puede reutilizarse del test del usuario); null si es simple. {@code spring}: el servicio lo crea Spring.
+     */
+    public String motivoMontajeNoSimple(boolean spring) {
+        String base = "este servicio necesita un montaje (valores, stubs o instancias) que tu test no prepara igual";
+        if (!p.mockito || p.junit != 5) {
+            return "junit-gen solo amplía tests de JUnit 5 con Mockito";
+        }
+        if (!sv.reales.isEmpty()) {
+            return base + " (instancias reales: " + String.join(", ", sv.reales.keySet()) + ")";
+        }
+        if (!argumentosConstruccion().isEmpty() || !stubsMontaje().isEmpty()) {
+            return base + " (`construccion` del spec)";
+        }
+        if (!sv.profundos.isEmpty()) {
+            return base + " (mocks profundos: " + String.join(", ", sv.profundos) + ")";
+        }
+        if (!sv.analisis.limpiezas.isEmpty()) {
+            return base + " (limpieza tras cada test)";
+        }
+        Map<String, String> argumentos = argumentosConstruccion();
+        for (Dependencia d : sv.analisis.dependencias) {
+            if (valorCampoPorDefecto(d, argumentos, new TreeSet<>()) != null) {
+                return base + " (valor por defecto de '" + d.nombre + "')";
+            }
+        }
+        for (Dependencia d : sv.mocks()) {
+            if (d.contenedor != null || d.obtencion == Dependencia.TipoObtencion.ELEMENTO_COLECCION
+                    || (AnalizadorDependencias.esProveedorBeans(d.tipo) && elementoDe(d) != null)) {
+                return base + " (colección o proveedor de '" + d.nombre + "')";
+            }
+        }
+        if (sv.analisis.constructor != null) {
+            for (int i = 0; i < sv.analisis.constructor.parametros.size(); i++) {
+                Dependencia d = dependenciaPosicion(i);
+                if (d == null || !sv.esMock(d)) {
+                    return base + " (parámetro " + (i + 1) + " del constructor que no es un mock)";
+                }
+            }
+        }
+        if (!spring) {
+            if (modoConNovedades(sv.analisis.modo) != Dependencia.ModoMontaje.INJECT_MOCKS) {
+                return base + " (no se puede crear solo con @InjectMocks)";
+            }
+            if (sv.postConstruct) {
+                for (String n : sv.analisis.postConstruct) {
+                    if (metodoPostConstruct(n) != null) {
+                        return base + " (método @PostConstruct " + n + ")";
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     /** true si algún import no comodín de {@code imports} tiene el mismo nombre simple que {@code fqn} con otro FQN. */
@@ -1002,6 +1096,10 @@ public class PlantillaTest {
         sb.append("// Generado por junit-gen ").append(Version.version())
                 .append(". Revísalo y cópialo a mano a src/test/java cuando te convenza.\n");
         sb.append("// Copiar a: ").append(RutasSalida.destinoCopia(sv.modulo, sv.clase, sv.claseTest)).append('\n');
+        if (sv.motivoSinMezcla != null) {
+            String motivo = Textos.sanearComentario(sv.motivoSinMezcla, 160);
+            sb.append(CopiaAmpliada.M_SIN_MEZCLA).append(' ').append(motivo == null || motivo.isBlank() ? "-" : motivo).append('\n');
+        }
         sb.append("// Los comentarios \"junit-gen:\" son marcadores: consérvalos para poder ampliar el archivo sin reescribirlo.\n");
         if (!sv.clase.paquete.isEmpty()) {
             sb.append("package ").append(sv.clase.paquete).append(";\n");

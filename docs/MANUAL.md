@@ -480,20 +480,44 @@ Patrones: `*` no cruza puntos y `**` cruza cualquier cosa. Las clases se compara
   tanda.json                estado de la tanda MCP (plan, índice, estado por servicio, `renunciados` por método y `cierre` de los servicios cerrados por atasco) con `fase`, `arreglos` (casos que fallaron, para arreglarlos al final, con `autoIntentos`, `autoCambios`, `automatico`, `origen`, `menosEstricto` y `avisosCalidad`) y `mediciones` (con `msArreglo` por servicio) para retomarla con `continuar`
   perfil-proyecto.json      perfil del proyecto: montaje de servicios, cómo crear los tipos de datos, stubs típicos, huellas de los fuentes y recetas aprendidas (se puede borrar sin perder tests)
   escaneo.md, escaneo.json  solo con scan --salida
-  <móduloRel>\<Servicio>\<Clase>Test.java   (sin <móduloRel> si la raíz es el módulo; <Servicio> = clase sin «Impl»; <Servicio>__<paquete> si dos servicios del módulo coinciden)
+  <móduloRel>\<Servicio>\<Clase>Test.java   (sin <móduloRel> si la raíz es el módulo; <Servicio> = clase sin «Impl»; <Servicio>__<paquete> si dos servicios del módulo coinciden); si el proyecto ya tiene <Clase>Test, es su copia ampliada (tu test intacto + los casos nuevos) o, si no se pudo mezclar, <Clase>GeneradoTest.java
   .junit-gen-tmp\           temporales de verificación (único sitio donde se borra)
     <módulo>\prep\          caché por módulo: classpath (Maven/Gradle) y clases del proyecto, con prep.json; se reutiliza mientras no cambie su huella (poms o build.gradle, junit-gen.yml, JDK y clases o fuentes main)
     <módulo>\lote\          ejecución síncrona de ejecutar_tests (todos, clases o modulo) y verify
     <módulo>\srv\<Servicio>-<hash>\   prueba de un servicio (segundo plano o generate): solo su archivo de test y sus clases
+    <módulo>\mezcla\<Clase>-<hash>\   comprobación de una copia ampliada: tu test solo (base) y la copia con los casos nuevos (copia)
 ```
 
 Los archivos generados por versiones anteriores en `<móduloRel>\src\test\java\<paquete>\` no se mueven: se siguen encontrando, ampliando y verificando ahí.
 
-Si ya existe un test con el mismo nombre en el proyecto, el generado se llama `<Clase>GeneradoTest` para que no lo sobrescribas al copiarlo. Los comentarios `// junit-gen:` son marcadores que permiten ampliar el archivo sin reescribir lo existente; si editas el archivo a mano y los quitas, junit-gen ya no lo toca.
+Los comentarios `// junit-gen:` son marcadores que permiten ampliar el archivo sin reescribir lo existente; si editas el archivo a mano y los quitas, junit-gen ya no lo toca.
+
+### Tests que ya tienes: la copia ampliada
+
+Si el proyecto ya tiene `<Clase>Test` en el paquete del servicio (y el spec no fija `claseTest`), junit-gen intenta dejar en la salida una **copia ampliada** con ese mismo nombre: tu archivo íntegro, sin cambiar, quitar ni reordenar ninguna línea (tampoco el fin de línea, el BOM ni el salto final), más los casos nuevos que no estén repetidos, añadidos al final de la clase y escritos con tus propios campos (el servicio y tus mocks; también en tests de Spring con `@Autowired` y `@MockBean`/`@MockitoBean`). junit-gen nunca añade campos `@Mock` ni `@MockBean`: si tu test no tiene un mock que el servicio necesita, no se mezcla. Tu archivo del proyecto solo se lee.
+
+La copia solo tiene dos bloques insertados, delimitados por marcadores:
+
+- tras tu último `import` (o tras `package`): `// junit-gen:imports-inicio` … `// junit-gen:imports-fin`, con los imports que falten;
+- antes de la llave de cierre de la clase: `// junit-gen:ampliacion-inicio original=<huella>` (sha256 de tu archivo original), `// junit-gen:montaje=ampliada`, los casos hasta `// junit-gen:casos-fin` y las fixtures hasta `// junit-gen:fixtures-fin`.
+
+Lo que hay entre esos marcadores lo gestiona junit-gen (añadir casos, rehacerlos con `arreglar_caso`, apartarlos, eliminarlos con `resolver_fallo` o reparar sus imports); lo que está fuera es tu archivo y nunca se toca: cada reescritura comprueba que, quitando los bloques junit-gen, queda tu original byte a byte, y si no es así no escribe nada.
+
+**Cuándo se mezcla.** Solo si tu test es un único `<Clase>Test` de JUnit 5 que junit-gen entiende sin riesgo: con `@ExtendWith(MockitoExtension.class)` y exactamente un `@InjectMocks` del servicio (sin `@Spy` ni inicializar), o un test de Spring (`@SpringBootTest`, `@WebMvcTest`… o `@ExtendWith(SpringExtension.class)`) con exactamente un `@Autowired` del servicio; con un mock tuyo (sin argumentos en la anotación) por cada dependencia que se mockea; sin `extends`, constructor propio, bloques inicializadores, clases `@Nested`, `@TestInstance` ni `@RunWith`; sin JUnit 4, PowerMock ni TestNG; sin métodos `@BeforeEach`/`@BeforeAll`/`@AfterEach`/`@AfterAll` que preparen o cambien el servicio o sus mocks; con la llave de cierre de la clase sola en su línea; de menos de 400 000 caracteres y en UTF-8. Además, el montaje de junit-gen para ese servicio tiene que ser solo «servicio con sus mocks»: sin `construccion` (argumentos ni stubs), mocks profundos, instancias reales, valores por defecto inyectados, colecciones o proveedores de beans, limpieza tras cada test, parámetros de constructor que no sean mocks ni (en tests de Mockito) `@PostConstruct` o montaje explícito.
+
+**Qué se comprueba antes de dártela.** (a) Texto: quitando los bloques junit-gen queda tu archivo byte a byte. (b) Compila. (c) Se ejecuta: tu test solo y la copia, en `.junit-gen-tmp\<módulo>\mezcla\` (con el JDK y el classpath del proyecto, tiempo máximo de 3 minutos por ejecución y vigilando que el proyecto no cambie); todo test tuyo que pasaba solo tiene que seguir pasando en la copia. Si ninguno de tus tests pasa en la carpeta temporal (por ejemplo, el contexto de Spring no arranca ahí), no se puede comprobar y no se mezcla. Por eso la primera generación de ese servicio tarda algo más.
+
+**Cuándo va a `<Clase>GeneradoTest`.** Si no se cumple algún criterio, si la comprobación falla o si no hay permiso para ejecutar tests (`verificacion: nunca` en `junit-gen.yml`, `generate --no-probar`, o no autorizar la prueba en la sesión MCP), los casos nuevos van a `<Clase>GeneradoTest.java` como siempre. Cuando hubo intento, el motivo queda en su cabecera (`// junit-gen:sin-mezcla …`) y en `informe.md`, apartado «Tests que ya tenías en el proyecto», que también dice qué archivo sustituye a cuál («Sustituye tu … por …») y la huella de tu original.
+
+**La decisión se mantiene por carpeta de salida.** Si la salida ya tiene la copia ampliada, las ejecuciones siguientes solo añaden casos dentro de sus bloques; si ya tiene `<Clase>GeneradoTest`, se sigue ampliando ese (para intentar la copia ampliada usa una carpeta de salida nueva).
+
+**Copia desfasada.** Si cambias tu test del proyecto después, la siguiente generación rehace la copia sobre tu versión actual conservando los casos de junit-gen (y se vuelven a probar), siempre que siga siendo mezclable con el mismo estilo, campo del servicio y mocks, y se pueda comprobar. Si no, la copia se deja como estaba y el informe avisa de que está desfasada: no la copies encima de tu test sin revisar las diferencias. Al ejecutar los tests también se avisa si un test tuyo deja de pasar en la copia (y pasa solo) o si la copia está desfasada.
+
+En un servicio con copia ampliada no se admiten `construccion` ni mocks profundos: los stubs van dentro de cada caso. Si una receta aprendida o un arreglo los necesita, ese servicio no se toca (lo indica el informe).
 
 ## Cómo copiar los tests al proyecto
 
-Es siempre un paso **manual**: revisa los tests en la carpeta de salida y copia los que te convenzan a `src\test\java` del módulo correspondiente, manteniendo el paquete. La carpeta de salida ya no replica el paquete (una carpeta por servicio); el destino exacto de cada test está en su cabecera (`// Copiar a:`) y en la tabla «Dónde copiar cada test» de `informe.md`. junit-gen y el agente nunca lo hacen por ti.
+Es siempre un paso **manual**: revisa los tests en la carpeta de salida y copia los que te convenzan a `src\test\java` del módulo correspondiente, manteniendo el paquete. La carpeta de salida ya no replica el paquete (una carpeta por servicio); el destino exacto de cada test está en su cabecera (`// Copiar a:`) y en la tabla «Dónde copiar cada test» de `informe.md`. junit-gen y el agente nunca lo hacen por ti. Una copia ampliada sustituye a tu archivo: cópiala encima de tu `<Clase>Test.java` (su ruta está en «Dónde copiar cada test»).
 
 ## Limitaciones
 

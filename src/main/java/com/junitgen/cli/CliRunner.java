@@ -217,6 +217,9 @@ public class CliRunner {
         op.eliminar = new LinkedHashSet<>(a.lista("eliminar"));
         op.confirmado = a.bandera("confirmar");
         op.todas = a.bandera("todas");
+        // Copia ampliada de un test existente: solo con permiso para ejecutar tests (--probar o verificacion: siempre).
+        op.verificarMezcla = a.bandera("probar") || (!a.bandera("no-probar")
+                && CargadorConfig.modoVerificacion(proyectoAviso) == ConfigProyecto.ModoVerificacion.SIEMPRE);
         Fachada.Generacion g = fachada.generar(null, spec, salida, proyecto, op);
         ResultadoGeneracion r = g.resultado();
         if (!r.errores.isEmpty()) {

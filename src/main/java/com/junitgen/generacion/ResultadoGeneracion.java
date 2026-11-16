@@ -67,4 +67,10 @@ public class ResultadoGeneracion {
     /** Cambios aplicados a la parte común de un test existente (imports sustituidos, fixtures reescritas; arreglar_caso). */
     @JsonIgnore
     public final List<String> cambiosComunes = new ArrayList<>();
+    /** Copias ampliadas que necesitan una comprobación (compilar y ejecutar) antes de escribirse; con alguna, no se escribe nada. */
+    @JsonIgnore
+    public final List<CopiaAmpliada.Pendiente> mezclasPendientes = new ArrayList<>();
+    /** Una línea markdown por servicio con test existente en el proyecto (copia ampliada o motivo por el que no se mezcló). */
+    @JsonIgnore
+    public final List<String> mezclas = new ArrayList<>();
 }

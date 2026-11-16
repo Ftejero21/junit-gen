@@ -8,6 +8,7 @@ import com.junitgen.escaneo.ModuloEscaneado;
 import com.junitgen.escaneo.ProyectoEscaneado;
 import com.junitgen.generacion.AlmacenSpec;
 import com.junitgen.generacion.CatalogoClases;
+import com.junitgen.generacion.CopiaAmpliada;
 import com.junitgen.perfil.RecetasAprendidas;
 import com.junitgen.generacion.EscritorInforme;
 import com.junitgen.generacion.FusionadorArchivo;
@@ -366,6 +367,12 @@ public final class VerificadorTests {
                 ej = EjecutorJUnit.ejecutar(ctx, fqns, cpEjecucion, mvn);
                 for (ResultadoTest t : ej.resultados()) {
                     ejecutados.put(t.clase + "#" + t.metodoTest, t);
+                }
+                // Copias ampliadas: los tests originales del usuario se ejecutan con la clase pero no son casos.
+                for (ArchivoGenerado g : generados) {
+                    if (fqns.contains(g.fqn()) && CopiaAmpliada.es(g.texto())) {
+                        VerificadorMezcla.revisarOriginales(ctx, cpCompilacion, mvn, g.fqn(), g.texto(), ej, rv, informe);
+                    }
                 }
             }
             try (PistasCompilacion pistas = new PistasCompilacion(me.indice, cpCompilacion, catalogo)) {

@@ -209,6 +209,13 @@ public final class FusionadorArchivo {
         if (imps.length() > 0) {
             texto = insertarAntes(texto, PlantillaTest.M_IMPORTS_FIN, imps.toString());
         }
+        if (!CopiaAmpliada.intacta(original, texto)) {
+            System.err.println("junit-gen: la fusión habría cambiado líneas del test original de una copia ampliada; no se toca");
+            Resultado nr = new Resultado();
+            nr.texto = original;
+            nr.motivoNoTocado = "la ampliación habría cambiado líneas de tu test original (copia ampliada); el archivo no se toca";
+            return nr;
+        }
         r.texto = texto;
         r.modificado = !texto.equals(original);
         return r;
@@ -242,6 +249,18 @@ public final class FusionadorArchivo {
         int inicioMarca = texto.lastIndexOf('\n', marca) + 1;
         String cabecera = texto.substring(0, inicioMarca);
         List<String> lineas = new ArrayList<>(List.of(cabecera.split("\n", -1)));
+        // En una copia ampliada solo se tocan las líneas del bloque junit-gen (tras imports-inicio), nunca las del usuario.
+        int desde = 0;
+        if (cabecera.contains(CopiaAmpliada.M_IMPORTS_INICIO)) {
+            for (int k = 0; k < lineas.size(); k++) {
+                if (sinCr(lineas.get(k)).strip().equals(CopiaAmpliada.M_IMPORTS_INICIO)) {
+                    desde = k + 1;
+                }
+            }
+            if (desde == 0) {
+                return texto;
+            }
+        }
         for (String fqn : fqns) {
             if (fqn == null || fqn.isEmpty() || fqn.startsWith("static ") || fqn.endsWith(".*") || fqn.indexOf('.') < 0) {
                 continue;
@@ -255,7 +274,7 @@ public final class FusionadorArchivo {
                     break;
                 }
             }
-            for (int k = 0; k < lineas.size(); k++) {
+            for (int k = desde; k < lineas.size(); k++) {
                 String l = lineas.get(k);
                 Matcher m = LINEA_IMPORT_SIMPLE.matcher(sinCr(l));
                 if (!m.matches()) {
@@ -411,7 +430,12 @@ public final class FusionadorArchivo {
             sb.append(sep).append(sangria).append(lineas[i].isBlank() ? "//" : "// " + lineas[i]);
         }
         sb.append(sep).append(lineas[lineas.length - 1]);
-        return texto.substring(0, reg[0]) + sb + texto.substring(reg[1]);
+        String nuevo = texto.substring(0, reg[0]) + sb + texto.substring(reg[1]);
+        if (!CopiaAmpliada.intacta(texto, nuevo)) {
+            System.err.println("junit-gen: apartar el caso " + id + " habría cambiado líneas del test original; no se toca");
+            return texto;
+        }
+        return nuevo;
     }
 
     /** [inicio de la línea de fixture-inicio, fin de la línea de fixture-fin (sin separador)] de la fixture {@code nombre}. */

@@ -2,6 +2,7 @@ package com.junitgen.verificacion;
 
 import com.junitgen.escaneo.IndiceTipos;
 import com.junitgen.generacion.CatalogoClases;
+import com.junitgen.generacion.CopiaAmpliada;
 import com.junitgen.generacion.FusionadorArchivo;
 import com.junitgen.generacion.PlantillaTest;
 import com.junitgen.generacion.ResolutorImports;
@@ -83,6 +84,10 @@ final class ReparadorImports {
                 }
             }
         }
+        if (!CopiaAmpliada.intacta(texto, actual)) {
+            System.err.println("junit-gen: la reparación de imports habría cambiado líneas del test original; no se aplica");
+            return new Resultado(texto, new ArrayList<>());
+        }
         return new Resultado(actual, cambios);
     }
 
@@ -109,10 +114,17 @@ final class ReparadorImports {
         if (fin < 0) {
             return texto;
         }
+        // En una copia ampliada solo son reparables las líneas del bloque junit-gen (entre imports-inicio e imports-fin).
+        int desde = 0;
+        for (int i = 0; i < fin; i++) {
+            if (sinCr(lineas[i]).strip().equals(CopiaAmpliada.M_IMPORTS_INICIO)) {
+                desde = i + 1;
+            }
+        }
         Set<Integer> rotas = new TreeSet<>();
         for (CompiladorTemporal.Diagnostico d : diags) {
             int idx = d.linea() - 1;
-            if (idx >= 0 && idx < fin && LINEA_IMPORT.matcher(sinCr(lineas[idx])).matches()) {
+            if (idx >= desde && idx < fin && LINEA_IMPORT.matcher(sinCr(lineas[idx])).matches()) {
                 rotas.add(idx);
             }
         }

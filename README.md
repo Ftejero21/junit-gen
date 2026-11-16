@@ -56,7 +56,16 @@ No hace falta aprender comandos. Escribe `/generartest` y lo que quieres:
 
 ## ¿Por qué junit-gen?
 
-Pedirle tests a una IA "a pelo" suele acabar igual: tests que no compilan, mocks inventados, imports que no existen y un `assertEquals` cambiado para que pase. Y tú revisando todo a mano.
+Pedirle tests a una IA "a pelo" suele acabar igual: tests que no compilan, mocks inventados, imports que no existen y un `assertEquals` cambiado para que pase. Y tú revisando todo a mano. Y además es lento: la IA escribe cada archivo de test palabra a palabra.
+
+### ⚡ Los tests los escribe una aplicación Java, no la IA
+
+junit-gen es una **aplicación Java** que analiza tu proyecto y **genera ella misma el código de los tests**, en milisegundos. La IA solo le dice *qué* probar con unas pocas líneas de JSON; todo el código lo escribe, compila y ejecuta junit-gen.
+
+- 🚀 **Muchísimo más rápido** que si la IA escribiera cada test: la IA genera un spec corto en vez de archivos enteros.
+- 💸 **Gasta mucha menos IA** (menos tokens, menos peticiones): ideal si tu plan es limitado.
+- 🎯 **Resultado uniforme y fiable**: mismo estilo en todos los tests, imports y firmas reales sacados de tu código, sin inventos.
+- ♻️ **Regenerar no cuesta IA**: a partir del `spec.json` junit-gen vuelve a escribir los tests al instante.
 
 **junit-gen cambia el reparto:**
 
@@ -261,7 +270,7 @@ Cualquiera que hable MCP: GitHub Copilot, Claude Code… Cuanto mejor el modelo,
 junit-gen compila y ejecuta cada caso. Si falla, le da a la IA el error real y pistas concretas: firmas reales, imports correctos, qué stub sobra… Si tras 3 intentos no se arregla, el caso se aparta: queda comentado en el test y anotado en el informe, nunca se borra.
 
 **¿Me cambia los tests que ya tengo?**
-No. Detecta los existentes para no duplicarlos; si hay uno con el mismo nombre, el nuevo se llama `…GeneradoTest`.
+No. junit-gen nunca toca tu proyecto: todo lo que crea va a la carpeta de salida. Tampoco repite los casos que ya tienes. Si ya tienes `PedidoServiceTest.java`, te deja en la salida una versión ampliada con ese mismo nombre: tu archivo tal cual, sin cambiar ni una línea, y los casos nuevos añadidos al final, usando tus propios mocks (también si tu test usa `@SpringBootTest` y `@MockBean`). Antes de dártela comprueba que compila y que tus tests siguen pasando. Tú decides si la copias encima de la tuya. Si no se puede mezclar con seguridad, los casos nuevos van aparte, en `PedidoServiceGeneradoTest.java`, y el informe explica por qué.
 
 **¿Funciona con Spring Boot y con proyectos multimódulo?**
 Sí. Maven y Gradle, uno o varios módulos.

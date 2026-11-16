@@ -109,6 +109,14 @@ public final class EscritorInforme {
             }
         }
 
+        if (!g.mezclas.isEmpty()) {
+            sb.append("### Tests que ya tenías en el proyecto\n\n");
+            for (String m : g.mezclas) {
+                sb.append("- ").append(m).append('\n');
+            }
+            sb.append('\n');
+        }
+
         if (!g.descartados.isEmpty()) {
             sb.append("### Tests que no se han creado porque ya existía uno igual\n\n");
             sb.append("| Identificador | Dónde estaba el repetido | Coincide con | Detalle técnico |\n|---|---|---|---|\n");

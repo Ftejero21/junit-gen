@@ -40,6 +40,19 @@ public final class GeneradorTests {
          * chocan por nombre simple se sustituyen y las fixtures con el mismo nombre se reescriben).
          */
         public boolean reemplazarComun;
+        /**
+         * Permiso para comprobar (compilar y ejecutar en el temporal) la copia ampliada de un test que ya existe en el
+         * proyecto. false (por defecto) = sin intento de mezcla: los casos van a {@code <Servicio>GeneradoTest}.
+         */
+        public boolean verificarMezcla;
+        /** Veredictos de las copias ampliadas ya comprobadas (clave = {@link CopiaAmpliada.Pendiente#clave()}). */
+        public final Map<String, CopiaAmpliada.Veredicto> veredictos = new LinkedHashMap<>();
+    }
+
+    /** Casos y fixtures renderizados de un servicio y, si hay archivo existente, su fusión. */
+    record Render(Map<String, ExtractorHuellasTests.Marcador> marcadores, List<PlantillaTest.Bloque> bloques,
+                  List<PlantillaTest.Bloque> fixtures, Map<String, ResultadoValidacion.CasoValidado> porId,
+                  FusionadorArchivo.Resultado fr) {
     }
 
     /** Código de error de la guardia: el caso necesita una decisión del usuario antes de tocarse. */
@@ -71,6 +84,11 @@ public final class GeneradorTests {
         if (guardiaProtegidos(previo, op, g)) {
             return g;
         }
+        // Pre-paso sin efectos: decide qué servicios usan la copia ampliada de su test existente.
+        Map<ResultadoValidacion.ServicioValidado, MezclasGeneracion.Decision> decisiones = MezclasGeneracion.decidir(val, esc, op, g);
+        if (!g.mezclasPendientes.isEmpty()) {
+            return g;
+        }
         Map<Path, String> plan = new LinkedHashMap<>();
         Map<String, CasoSpec> actualizados = new LinkedHashMap<>();
         Set<String> eliminadosTotal = new LinkedHashSet<>();
@@ -80,44 +98,30 @@ public final class GeneradorTests {
             if (!g.perfiles.contains(perfil.nombre())) {
                 g.perfiles.add(perfil.nombre());
             }
-            PlantillaTest plantilla = new PlantillaTest(perfil, sv);
+            MezclasGeneracion.Decision dec = decisiones.get(sv);
+            PlanMezcla mezcla = dec == null ? null : dec.plan();
+            PlantillaTest plantilla = mezcla != null ? new PlantillaTest(perfil, sv, mezcla) : new PlantillaTest(perfil, sv);
             Path archivo = RutasSalida.archivoTest(salida, sv.modulo, sv.clase, sv.claseTest);
+            if (dec != null && dec.tipo() == MezclasGeneracion.Tipo.NO_TOCAR) {
+                g.noTocados.add(archivo + ": " + dec.motivo());
+                continue;
+            }
             String existente = null;
-            if (Files.isRegularFile(archivo)) {
+            if (mezcla != null) {
+                existente = dec.base();
+            } else if (Files.isRegularFile(archivo)) {
                 try {
                     existente = Files.readString(archivo, StandardCharsets.UTF_8);
                 } catch (IOException e) {
                     throw new IllegalStateException("No se puede leer " + archivo + ": " + e.getMessage(), e);
                 }
             }
-            Map<String, ExtractorHuellasTests.Marcador> marcadores = new LinkedHashMap<>();
-            Set<String> ocupados = new LinkedHashSet<>();
-            if (existente != null) {
-                for (ExtractorHuellasTests.Marcador m : ExtractorHuellasTests.marcadores(existente)) {
-                    marcadores.put(m.id(), m);
-                }
-                ocupados.addAll(FusionadorArchivo.metodosExistentes(existente));
-            }
-            List<PlantillaTest.Bloque> bloques = new ArrayList<>();
-            Map<String, ResultadoValidacion.CasoValidado> porId = new LinkedHashMap<>();
-            for (ResultadoValidacion.CasoValidado cv : sv.casos) {
-                if (val.esDuplicado(cv.spec.id)) {
-                    continue;
-                }
-                Set<String> ocupadosCaso = new LinkedHashSet<>(ocupados);
-                ExtractorHuellasTests.Marcador previoMarcador = marcadores.get(cv.spec.id);
-                if (previoMarcador != null && previoMarcador.metodoTest() != null) {
-                    ocupadosCaso.remove(previoMarcador.metodoTest());
-                }
-                PlantillaTest.Bloque b = plantilla.caso(cv, ocupadosCaso);
-                ocupados.add(b.nombreMetodo());
-                bloques.add(b);
-                porId.put(cv.spec.id, cv);
-            }
-            List<PlantillaTest.Bloque> fixtures = new ArrayList<>();
-            if (sv.spec.fixtures != null) {
-                sv.spec.fixtures.forEach(f -> fixtures.add(plantilla.fixture(f)));
-            }
+            Render rd = render(val, sv, plantilla, existente, op, mezcla != null);
+            List<PlantillaTest.Bloque> bloques = rd.bloques();
+            List<PlantillaTest.Bloque> fixtures = rd.fixtures();
+            Map<String, ResultadoValidacion.CasoValidado> porId = rd.porId();
+            String textoFinal = null;
+            boolean escrito = false;
             List<String> anadidos = new ArrayList<>();
             Map<String, String> metodos = new LinkedHashMap<>();
             Set<String> reemplazadosAqui = new LinkedHashSet<>();
@@ -126,6 +130,7 @@ public final class GeneradorTests {
                     continue;
                 }
                 plan.put(archivo, plantilla.archivoNuevo(bloques, fixtures));
+                escrito = true;
                 g.archivosCreados.add(archivo.toString());
                 g.destinosCopia.put(salida.relativize(archivo).toString().replace('\\', '/'),
                         RutasSalida.destinoCopia(sv.modulo, sv.clase, sv.claseTest));
@@ -134,16 +139,7 @@ public final class GeneradorTests {
                     metodos.put(b.id(), b.nombreMetodo());
                 }
             } else {
-                Set<String> eliminarAqui = new LinkedHashSet<>();
-                for (String id : op.eliminar) {
-                    if (marcadores.containsKey(id)) {
-                        eliminarAqui.add(id);
-                    }
-                }
-                FusionadorArchivo.Resultado fr = FusionadorArchivo.fusionar(existente, plantilla.hashMontaje(), bloques, fixtures,
-                        plantilla.importsArchivo(bloques), plantilla.estaticosArchivo(bloques), op.reemplazar, eliminarAqui,
-                        plantilla.cabeceraClase(), plantilla.pieClase(), op.reemplazarComun,
-                        sv.spec.imports == null ? List.of() : sv.spec.imports);
+                FusionadorArchivo.Resultado fr = rd.fr();
                 String claseTest = sv.claseTest;
                 for (String c : fr.importsSustituidos) {
                     g.cambiosComunes.add("Import sustituido en `" + claseTest + "`: " + c);
@@ -165,11 +161,22 @@ public final class GeneradorTests {
                             "montaje de " + sv.clase.simple + " actualizado; los casos existentes se conservan y se vuelven a probar",
                             null));
                 }
-                if (fr.modificado) {
+                boolean nueva = dec != null && dec.tipo() == MezclasGeneracion.Tipo.NUEVA;
+                boolean rehecha = dec != null && dec.tipo() == MezclasGeneracion.Tipo.REHECHA;
+                if (rehecha) {
+                    g.remontados.put(sv.clase.fqn, new ArrayList<>(CopiaAmpliada.idsEnBloques(fr.texto)));
+                }
+                textoFinal = fr.texto;
+                if (fr.modificado || nueva || rehecha) {
                     plan.put(archivo, fr.texto);
-                    g.archivosAmpliados.add(archivo.toString());
+                    escrito = true;
+                    if (nueva) {
+                        g.archivosCreados.add(archivo.toString());
+                    } else {
+                        g.archivosAmpliados.add(archivo.toString());
+                    }
                     g.destinosCopia.put(salida.relativize(archivo).toString().replace('\\', '/'),
-                            RutasSalida.destinoCopia(sv.modulo, sv.clase, sv.claseTest));
+                            mezcla != null ? dec.relOriginal() : RutasSalida.destinoCopia(sv.modulo, sv.clase, sv.claseTest));
                 }
                 anadidos.addAll(fr.anadidos);
                 anadidos.addAll(fr.reemplazados);
@@ -181,6 +188,9 @@ public final class GeneradorTests {
                 g.eliminados.addAll(fr.eliminados);
                 eliminadosTotal.addAll(fr.eliminados);
                 eliminarPendientes.removeAll(fr.eliminados);
+            }
+            if (dec != null) {
+                MezclasGeneracion.anotar(g, sv, dec, salida, archivo, textoFinal, anadidos.size(), escrito);
             }
             for (String id : anadidos) {
                 ResultadoValidacion.CasoValidado cv = porId.get(id);
@@ -252,6 +262,57 @@ public final class GeneradorTests {
         g.spec = rutaSpec.toString();
         g.informe = rutaInforme.toString();
         return g;
+    }
+
+    /**
+     * Renderiza los casos y fixtures de {@code sv} y, si hay {@code existente}, los fusiona (sin escribir nada). Lo
+     * usan el pre-paso de las copias ampliadas y el bucle principal, que obtienen así el mismo texto. Con
+     * {@code mezcla} nunca se remonta (cabecera y pie null).
+     */
+    static Render render(ResultadoValidacion val, ResultadoValidacion.ServicioValidado sv, PlantillaTest plantilla, String existente,
+                         Opciones op, boolean mezcla) {
+        Map<String, ExtractorHuellasTests.Marcador> marcadores = new LinkedHashMap<>();
+        Set<String> ocupados = new LinkedHashSet<>();
+        if (existente != null) {
+            for (ExtractorHuellasTests.Marcador m : ExtractorHuellasTests.marcadores(existente)) {
+                marcadores.put(m.id(), m);
+            }
+            ocupados.addAll(FusionadorArchivo.metodosExistentes(existente));
+        }
+        List<PlantillaTest.Bloque> bloques = new ArrayList<>();
+        Map<String, ResultadoValidacion.CasoValidado> porId = new LinkedHashMap<>();
+        for (ResultadoValidacion.CasoValidado cv : sv.casos) {
+            if (val.esDuplicado(cv.spec.id)) {
+                continue;
+            }
+            Set<String> ocupadosCaso = new LinkedHashSet<>(ocupados);
+            ExtractorHuellasTests.Marcador previoMarcador = marcadores.get(cv.spec.id);
+            if (previoMarcador != null && previoMarcador.metodoTest() != null) {
+                ocupadosCaso.remove(previoMarcador.metodoTest());
+            }
+            PlantillaTest.Bloque b = plantilla.caso(cv, ocupadosCaso);
+            ocupados.add(b.nombreMetodo());
+            bloques.add(b);
+            porId.put(cv.spec.id, cv);
+        }
+        List<PlantillaTest.Bloque> fixtures = new ArrayList<>();
+        if (sv.spec.fixtures != null) {
+            sv.spec.fixtures.forEach(f -> fixtures.add(plantilla.fixture(f)));
+        }
+        FusionadorArchivo.Resultado fr = null;
+        if (existente != null) {
+            Set<String> eliminarAqui = new LinkedHashSet<>();
+            for (String id : op.eliminar) {
+                if (marcadores.containsKey(id)) {
+                    eliminarAqui.add(id);
+                }
+            }
+            fr = FusionadorArchivo.fusionar(existente, plantilla.hashMontaje(), bloques, fixtures,
+                    plantilla.importsArchivo(bloques), plantilla.estaticosArchivo(bloques), op.reemplazar, eliminarAqui,
+                    mezcla ? null : plantilla.cabeceraClase(), mezcla ? null : plantilla.pieClase(), op.reemplazarComun,
+                    sv.spec.imports == null ? List.of() : sv.spec.imports);
+        }
+        return new Render(marcadores, bloques, fixtures, porId, fr);
     }
 
     /**

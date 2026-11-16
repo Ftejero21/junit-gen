@@ -137,6 +137,18 @@ public class HerramientaGenerar implements Herramienta {
         return RutasSesion.aviso(args, sesion, null, "carpetaSalida", "(proyecto del spec)");
     }
 
+    /**
+     * Permiso para comprobar la copia ampliada de un test existente (compila y ejecuta el test del usuario en el
+     * temporal): la decisión de la sesión si la hay («probar»); si no, {@code verificacion: siempre} del proyecto.
+     */
+    static boolean verificarMezcla(SesionMcp sesion, Path proyecto) {
+        String decision = sesion.decisionVerificacion();
+        if (decision != null) {
+            return DECISION_PROBAR.equals(decision);
+        }
+        return CargadorConfig.modoVerificacion(proyecto) == ConfigProyecto.ModoVerificacion.SIEMPRE;
+    }
+
     @Override
     public Resultado ejecutar(JsonNode args, SesionMcp sesion) {
         String decisionArg = Herramienta.texto(args, "decisionVerificacion");
@@ -165,6 +177,7 @@ public class HerramientaGenerar implements Herramienta {
         // Casos acreditados por servicio antes de generar (salvaguarda anti-bucle); las correcciones no cuentan.
         Map<String, Integer> antes = sesion.acreditadosPorServicio(proyecto != null ? proyecto : sesion.fachada().ultimaRuta());
         boolean contar = op.reemplazar.isEmpty() && op.eliminar.isEmpty();
+        op.verificarMezcla = verificarMezcla(sesion, proyecto);
         Fachada.Generacion gen = sesion.fachada().generar(args.get("spec"), rutaSpec, salida, proyecto, op);
         ResultadoGeneracion g = gen.resultado();
         Path proyectoResumen = proyecto != null ? proyecto : sesion.fachada().ultimaRuta();

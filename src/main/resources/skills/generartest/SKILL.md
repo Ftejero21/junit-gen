@@ -154,6 +154,7 @@ El esquema del spec es el `inputSchema.spec` de las herramientas `validar_spec` 
 - `tiposAuxiliares[].modo` (`record|builder|setters|constructor|enum|no_instanciable`), `crear` y `setters`: cómo crear un objeto de prueba del tipo (en `datos` o `preparacion`).
 - `queHaceOriginal` (qué hace la función original) y `queComprueba` (qué comprueba este test): 1 frase cada uno, máx. 160 caracteres; obligatorios en casos nuevos. junit-gen los escribe como comentario del método de test (máx. 4 líneas).
 - Solo funciones listadas en el paquete de trabajo (o por `detalle_servicio`) y nunca más de `maxCasos` casos por función: junit-gen rechaza el resto (`FUNCION_NO_SELECCIONADA`, `EXCESO_CASOS`, `FALTA_COMENTARIO`); con MCP no pongas `seleccion` en el spec (la selección se hace con `seleccionar_funciones`).
+- Si el proyecto ya tiene `<Servicio>Test`, junit-gen intenta dejar en la salida una copia ampliada con ese nombre (el test del usuario intacto + los casos nuevos al final). Los avisos `COPIA_AMPLIADA`, `SIN_MEZCLA` y `COPIA_DESFASADA` son informativos: no corrijas nada ni repitas la llamada; escribe el spec como siempre, con los nombres de `mocks` del paquete de trabajo. En ese servicio no uses `construccion` ni mocks profundos: pon los stubs dentro de cada caso. La primera `generar_tests` de ese servicio puede tardar más (compila y ejecuta el test existente en el temporal).
 
 ## Modelo
 

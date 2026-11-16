@@ -729,6 +729,7 @@ public class HerramientaArreglarCaso implements Herramienta {
         op.reemplazar = new LinkedHashSet<>(nuevos.keySet());
         op.todas = sesion.todas(proyecto);
         op.selecciones = sesion.selecciones(proyecto);
+        op.verificarMezcla = HerramientaGenerar.verificarMezcla(sesion, proyecto);
         Fachada.Generacion g = sesion.fachada().generar(gen, null, salida, proyecto, op);
         return new Regeneracion(g, servicioCambia);
     }

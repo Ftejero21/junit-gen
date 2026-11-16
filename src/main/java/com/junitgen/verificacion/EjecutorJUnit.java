@@ -9,6 +9,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -57,13 +58,19 @@ public final class EjecutorJUnit {
     }
 
     public static Ejecucion ejecutar(ContextoVerificacion ctx, List<String> clases, List<Path> cp, Path mvn) {
+        return ejecutar(ctx, clases, cp, mvn, ProcesoSeguro.TIMEOUT_TESTS);
+    }
+
+    /** Como {@link #ejecutar(ContextoVerificacion, List, List, Path)} con un tiempo máximo propio. */
+    public static Ejecucion ejecutar(ContextoVerificacion ctx, List<String> clases, List<Path> cp, Path mvn, Duration timeout) {
+        Duration limite = timeout == null ? ProcesoSeguro.TIMEOUT_TESTS : timeout;
         String plataforma = versionPlataforma(cp);
         String junit4 = versionJunit4(cp);
         Path reports = ctx.escritor.carpetaTemporal(ctx.tmp.resolve("reports"));
         Path javaTmp = ctx.escritor.carpetaTemporal(ctx.tmp.resolve("java-tmp"));
         Path cwd = ctx.tmp.resolve("run-tests");
         if (plataforma == null && junit4 != null && (!Textos.versionAlMenos(junit4, "4.12") || ctx.jdk.jdk().major() < 8)) {
-            return junitCore(ctx, clases, cp, javaTmp, cwd);
+            return junitCore(ctx, clases, cp, javaTmp, cwd, limite);
         }
         String versionStandalone = plataforma != null ? plataforma : "1.10.2";
         if (plataforma == null && junit4 == null) {
@@ -108,9 +115,9 @@ public final class EjecutorJUnit {
                 args.add(l.startsWith("\"") ? l.substring(1, l.length() - 1) : l);
             }
         }
-        r = ctx.proceso.java(ctx.jdk.jdk().home(), args, cwd, ctx.log("tests.log"), ProcesoSeguro.TIMEOUT_TESTS);
+        r = ctx.proceso.java(ctx.jdk.jdk().home(), args, cwd, ctx.log("tests.log"), limite);
         if (r.timeout()) {
-            throw new SeguridadException("Los tests superaron el tiempo máximo (10 min). Log: " + r.log());
+            throw new SeguridadException("Los tests superaron el tiempo máximo (" + Math.max(1, limite.toMinutes()) + " min). Log: " + r.log());
         }
         try {
             List<ResultadoTest> res = LectorResultadosXml.leer(reports);
@@ -164,7 +171,8 @@ public final class EjecutorJUnit {
         return jar;
     }
 
-    private static Ejecucion junitCore(ContextoVerificacion ctx, List<String> clases, List<Path> cp, Path javaTmp, Path cwd) {
+    private static Ejecucion junitCore(ContextoVerificacion ctx, List<String> clases, List<Path> cp, Path javaTmp, Path cwd,
+                                       Duration limite) {
         List<String> args = new ArrayList<>();
         Path pathing = pathingJar(ctx, cp);
         args.add("-Djava.io.tmpdir=" + javaTmp);
@@ -172,8 +180,7 @@ public final class EjecutorJUnit {
         args.add(pathing.toString());
         args.add("org.junit.runner.JUnitCore");
         args.addAll(clases);
-        ProcesoSeguro.Resultado r = ctx.proceso.java(ctx.jdk.jdk().home(), args, cwd, ctx.log("tests-junitcore.log"),
-                ProcesoSeguro.TIMEOUT_TESTS);
+        ProcesoSeguro.Resultado r = ctx.proceso.java(ctx.jdk.jdk().home(), args, cwd, ctx.log("tests-junitcore.log"), limite);
         List<ResultadoTest> res = new ArrayList<>();
         String[] l = r.salida().split("\\R");
         for (int i = 0; i < l.length; i++) {

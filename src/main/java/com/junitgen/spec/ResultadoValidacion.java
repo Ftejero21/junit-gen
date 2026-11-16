@@ -71,6 +71,12 @@ public class ResultadoValidacion {
         public final Map<Integer, String> formaStubMontaje = new LinkedHashMap<>();
         /** true si se invocan los @PostConstruct tras montar. */
         public boolean postConstruct;
+        /** Test {@code <Servicio>Test} que ya existe en el proyecto (sin claseTest explícito); null si no hay. */
+        public InfoClase testExistente;
+        /** true si la salida ya tiene la copia ampliada {@code <Servicio>Test.java} de ese test. */
+        public boolean copiaAmpliada;
+        /** Motivo por el que no se pudo mezclar con el test existente (cabecera del GeneradoTest); null si no hubo intento. */
+        public String motivoSinMezcla;
 
         /** true si la dependencia se declara como mock en el test (no es real ni deriva de un real). */
         public boolean esMock(Dependencia d) {

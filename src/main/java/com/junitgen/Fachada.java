@@ -11,6 +11,7 @@ import com.junitgen.escaneo.PaqueteTrabajo;
 import com.junitgen.escaneo.ProyectoEscaneado;
 import com.junitgen.escaneo.SeleccionFunciones;
 import com.junitgen.generacion.AlmacenSpec;
+import com.junitgen.generacion.CopiaAmpliada;
 import com.junitgen.generacion.EscritorInforme;
 import com.junitgen.generacion.GeneradorTests;
 import com.junitgen.generacion.ResultadoGeneracion;
@@ -32,6 +33,7 @@ import com.junitgen.spec.ValidadorSpec;
 import com.junitgen.util.Json;
 import com.junitgen.verificacion.ResultadoTest;
 import com.junitgen.verificacion.ResultadoVerificacion;
+import com.junitgen.verificacion.VerificadorMezcla;
 import com.junitgen.verificacion.VerificadorTests;
 
 import java.nio.file.Files;
@@ -368,18 +370,61 @@ public class Fachada {
         Path proyecto = rutaProyecto(l.spec(), ruta);
         EscritorSeguro esc = new EscritorSeguro(proyecto, salida);
         ProyectoEscaneado p = proyecto(esc.proyecto(), false);
-        return BloqueosSalida.conEscritura(esc.salida(), () -> {
-            List<RecetasAprendidas.Aplicada> aplicadas = new ArrayList<>();
-            ResultadoValidacion v = validarConRecetas(l, spec, rutaSpec, p, esc.salida(), op != null && op.todas,
-                    op == null ? null : op.selecciones, aplicadas);
-            ResultadoGeneracion g = GeneradorTests.generar(v, esc, op);
-            if (g.errores.isEmpty()) {
-                AlmacenPerfil.sincronizar(esc, p);
-                anotarRecetasEnPrueba(esc, p, g, aplicadas);
+        GeneradorTests.Opciones opc = op != null ? op : new GeneradorTests.Opciones();
+        // Rondas: generar sin escribir mientras haya copias ampliadas sin comprobar; comprobarlas sin el bloqueo de escritura.
+        for (int ronda = 1; ; ronda++) {
+            LectorSpec.Lectura lr = ronda == 1 ? l : leerSpec(spec, rutaSpec);
+            if (!lr.ok()) {
+                ResultadoGeneracion g = new ResultadoGeneracion();
+                g.errores.addAll(lr.errores());
+                ResultadoValidacion v = new ResultadoValidacion();
+                v.errores.addAll(lr.errores());
+                return new Generacion(g, v, null);
             }
-            return new Generacion(g, v, esc);
-        });
+            Generacion gen = BloqueosSalida.conEscritura(esc.salida(), () -> {
+                List<RecetasAprendidas.Aplicada> aplicadas = new ArrayList<>();
+                ResultadoValidacion v = validarConRecetas(lr, spec, rutaSpec, p, esc.salida(), opc.todas, opc.selecciones, aplicadas);
+                ResultadoGeneracion g = GeneradorTests.generar(v, esc, opc);
+                if (g.errores.isEmpty() && g.mezclasPendientes.isEmpty()) {
+                    AlmacenPerfil.sincronizar(esc, p);
+                    anotarRecetasEnPrueba(esc, p, g, aplicadas);
+                }
+                return new Generacion(g, v, esc);
+            });
+            List<CopiaAmpliada.Pendiente> pendientes = gen.resultado().mezclasPendientes;
+            if (pendientes.isEmpty() || !gen.resultado().errores.isEmpty()) {
+                return gen;
+            }
+            if (ronda > RONDAS_MEZCLA + RONDAS_MEZCLA_EXTRA) {
+                ResultadoGeneracion g = new ResultadoGeneracion();
+                g.avisos.addAll(gen.resultado().avisos);
+                g.errores.add(ErrorValidacion.error("$.servicios", "MEZCLA_INESTABLE",
+                        "El contenido de la carpeta de salida cambiaba durante la comprobación de las copias ampliadas: no se ha escrito nada.",
+                        "Repite la llamada cuando no haya otra generación en curso sobre la misma carpeta de salida."));
+                return new Generacion(g, gen.validacion(), esc);
+            }
+            if (ronda > RONDAS_MEZCLA) {
+                for (CopiaAmpliada.Pendiente pend : pendientes) {
+                    opc.veredictos.putIfAbsent(pend.clave(), new CopiaAmpliada.Veredicto(false,
+                            "el contenido de la salida cambiaba durante la comprobación", 0));
+                }
+                continue;
+            }
+            BloqueosSalida.conEjecucion(esc.salida(), () -> {
+                for (CopiaAmpliada.Pendiente pend : pendientes) {
+                    if (!opc.veredictos.containsKey(pend.clave())) {
+                        opc.veredictos.put(pend.clave(), VerificadorMezcla.comprobar(p, esc, pend));
+                    }
+                }
+                return null;
+            });
+        }
     }
+
+    /** Rondas de generación con comprobación de copias ampliadas antes de dar por negativas las que sigan pendientes. */
+    private static final int RONDAS_MEZCLA = 3;
+    /** Rondas finales (con veredicto negativo para lo pendiente) antes de rendirse. */
+    private static final int RONDAS_MEZCLA_EXTRA = 2;
 
     /** Anota en el perfil las recetas de tipo aplicadas a servicios con casos generados o remontados (se confirman al verificar). */
     private static void anotarRecetasEnPrueba(EscritorSeguro esc, ProyectoEscaneado p, ResultadoGeneracion g,
