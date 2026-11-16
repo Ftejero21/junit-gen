@@ -221,19 +221,18 @@ El comando completo es `/junit-gen:generartest`; el corto `/generartest` funcion
 
 ### GitHub Copilot en VS Code
 
-```bash
-git clone https://github.com/Ftejero21/junit-gen.git
-cd junit-gen
-./instalar-copilot.sh
-```
+1. **Instala** (una sola vez): registra el servidor MCP en VS Code y copia la skill `/generartest`.
+   ```bash
+   git clone https://github.com/Ftejero21/junit-gen.git
+   cd junit-gen
+   ./instalar-copilot.sh            # Windows: powershell -ExecutionPolicy Bypass -File .\instalar-copilot.ps1
+   ```
+2. **Reinicia VS Code** y abre tu proyecto (p. ej. `C:\Proyectos\MiProyecto`).
+3. En el chat de Copilot: modo **Agent**, un **modelo fijo** (no «Auto»; mejor Claude Sonnet si lo tienes) y, en el selector de herramientas, activa `junit-gen` y acepta sus herramientas.
+4. Escribe `/generartest genérame los tests de 5 servicios`. La primera vez te pregunta la carpeta de salida (p. ej. `C:\Proyectos\MiProyectoTest`) y la recuerda.
+5. Revisa los tests y el `informe.md` de esa carpeta y copia a `src/test/java` los que quieras.
 
-En Windows:
-
-```
-powershell -ExecutionPolicy Bypass -File .\instalar-copilot.ps1
-```
-
-Abre tu proyecto en VS Code, pon el chat en modo **Agent** y escribe `/generartest` con lo que quieras probar.
+> **💡 ¿Por qué es preferible Claude Code?** Copilot no tiene subagentes, así que junit-gen trabaja allí en **modo secuencial**: una sola conversación hace todos los servicios uno detrás de otro y va creciendo con cada uno. Funciona y conserva todas las garantías, pero es más lento y gasta más cuantos más servicios pidas. En **Claude Code** junit-gen reparte los servicios entre **subagentes que trabajan en paralelo**, cada uno con el contexto limpio: de ahí salen las mejoras de la tabla (hasta 3,8× más rápido). En Copilot, para tandas grandes, pide los servicios por tramos o retoma con `/generartest continuar` en un chat nuevo.
 
 ### Desde el código
 
