@@ -84,6 +84,8 @@ junit-gen es una **aplicación Java** que analiza tu proyecto y **genera ella mi
 
 Mismo proyecto real (Spring Boot, 2 módulos), mismos servicios y mismo modelo (Claude Haiku 5.5, esfuerzo alto, Claude Code CLI). «Solo IA» = pedirle a la IA que escriba, compile y arregle los tests por su cuenta.
 
+![junit-gen frente a la IA sola: tiempo, tokens y coste con 5, 15 y 25 servicios](docs/img/comparativa.svg)
+
 | Servicios | Solo IA | Con junit-gen | Diferencia |
 |---|---|---|---|
 | 5 | 6 min 48 s · 4,5 M tokens · 35/35 pasan | 5 min 02 s · 1,8 M tokens · 27/27 pasan | 1,4× más rápido · −60 % tokens |
