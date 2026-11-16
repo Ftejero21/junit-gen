@@ -62,8 +62,8 @@ Pedirle tests a una IA "a pelo" suele acabar igual: tests que no compilan, mocks
 
 junit-gen es una **aplicación Java** que analiza tu proyecto y **genera ella misma el código de los tests**, en milisegundos. La IA solo le dice *qué* probar con unas pocas líneas de JSON; todo el código lo escribe, compila y ejecuta junit-gen.
 
-- 🚀 **Hasta 2,7× más rápido** que si la IA escribiera cada test: la IA genera un spec corto en vez de archivos enteros, y en Claude Code los servicios se reparten entre subagentes que trabajan **en paralelo**.
-- 💸 **Gasta mucha menos IA**: entre un 60 % y un 73 % menos de tokens y hasta un 81 % menos de coste en las pruebas medidas.
+- 🚀 **Hasta 3,8× más rápido** que si la IA escribiera cada test: la IA genera un spec corto en vez de archivos enteros, y en Claude Code los servicios se reparten entre subagentes que trabajan **en paralelo**.
+- 💸 **Gasta mucha menos IA**: entre un 42 % y un 73 % menos de tokens y hasta un 81 % menos de coste en las pruebas medidas (Haiku, Sonnet y Opus 5.5).
 - 🎯 **Resultado uniforme y fiable**: mismo estilo en todos los tests, imports y firmas reales sacados de tu código, sin inventos.
 - ♻️ **Regenerar no cuesta IA**: a partir del `spec.json` junit-gen vuelve a escribir los tests al instante.
 
@@ -82,17 +82,22 @@ junit-gen es una **aplicación Java** que analiza tu proyecto y **genera ella mi
 
 ### 📊 Medido, no prometido
 
-Mismo proyecto real (Spring Boot, 2 módulos), mismos servicios y mismo modelo (Claude Haiku 5.5, esfuerzo alto, Claude Code CLI). «Solo IA» = pedirle a la IA que escriba, compile y arregle los tests por su cuenta.
+Mismo proyecto real (Spring Boot, 2 módulos), mismos servicios y tres modelos (Claude Haiku, Sonnet y Opus 5.5, esfuerzo alto, Claude Code CLI). «Solo IA» = pedirle a la IA que escriba, compile y arregle los tests por su cuenta.
 
-![junit-gen frente a la IA sola: tiempo, tokens y coste con 5, 15 y 25 servicios](docs/img/comparativa.svg)
+![junit-gen frente a la IA sola con Haiku, Sonnet y Opus 5.5: tiempo, tokens y coste con 5, 15 y 25 servicios](docs/img/comparativa.svg)
 
-| Servicios | Solo IA | Con junit-gen | Diferencia |
+**junit-gen frente a la IA sola** (mismo modelo en las dos columnas):
+
+| Modelo | 5 servicios | 15 servicios | 25 servicios |
 |---|---|---|---|
-| 5 | 6 min 48 s · 4,5 M tokens · 35/35 pasan | 5 min 02 s · 1,8 M tokens · 27/27 pasan | 1,4× más rápido · −60 % tokens |
-| 15 | 14 min 17 s · 11,4 M tokens · 1,10 $ · 94/95 | **5 min 21 s · 3,1 M tokens · 0,20 $ · 71/71** | **2,7× más rápido · −73 % tokens · −81 % coste** |
-| 25 | 12 min 45 s · 11,9 M tokens · 1,04 $ · 115/116 | **6 min 06 s · 4,2 M tokens · 0,26 $ · 128/129** | **2,1× más rápido · −64 % tokens · −75 % coste** |
+| Haiku 5.5 | 1,4× más rápido · −60 % tokens | 2,7× · −73 % tokens · −81 % coste | 2,1× · −64 % tokens · −75 % coste |
+| **Sonnet 5.5** | **2,5× · −49 % tokens · −31 % coste** | **3,8× · −67 % tokens · −40 % coste** | **3,1× · −72 % tokens · −32 % coste** |
+| Opus 5.5 | 1,2× · −42 % tokens · −6 % coste | 1,8× · −61 % tokens · −20 % coste | 1,9× · −60 % tokens · −16 % coste |
 
-Además, en esas pruebas la IA sola **modificó o sobrescribió tests que ya existían** en el proyecto; junit-gen no tocó ni un archivo. Los resultados varían entre ejecuciones (sobre todo con pocos servicios) y dependen del modelo y del proyecto.
+Con 25 servicios, la tanda completa tarda **4 min 38 s con Sonnet + junit-gen**, frente a 12–17 min de cualquier modelo trabajando solo. En todas las ejecuciones los tests que entrega junit-gen compilan y pasan, y junit-gen no tocó ni un archivo del proyecto; las IAs solas, en cambio, modificaron, apartaron o sobrescribieron tests que ya existían. La IA sola escribe más tests por servicio (junit-gen limita los casos por función y descarta duplicados). Los resultados varían entre ejecuciones y dependen del proyecto.
+
+> ### ⭐ Modelo recomendado: **Sonnet 5.5 con esfuerzo alto**
+> Es la combinación más rápida y equilibrada: acertó todos los casos a la primera (cero arreglos en las tres pruebas), fue la más rápida en todos los tamaños y gasta bastante menos que Opus. Haiku es el más barato, pero falla más casos a la primera y la fase de arreglo lo hace más lento; Opus es igual de fiable pero más lento y caro.
 
 ---
 
@@ -208,6 +213,8 @@ junit-gen está diseñado para que puedas lanzarlo sobre cualquier repositorio s
 ## 📦 Instalación
 
 **Requisito:** Java 17 o superior (JDK) en el `PATH`.
+
+**Modelo recomendado:** Sonnet 5.5 con esfuerzo alto (ver [«Medido, no prometido»](#-medido-no-prometido)).
 
 ### Claude Code (plugin)
 
