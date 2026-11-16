@@ -1,0 +1,23 @@
+# Compilación
+target/
+*.class
+
+# Datos locales de junit-gen
+rutas-por-defecto.json
+.junit-gen-tmp/
+# Carpetas de salida de prueba en la raíz (p. ej. ejemploTest/). Anclado a la raíz: en Windows
+# git no distingue mayúsculas y "*Test/" ignoraría también src/test/.
+/*Test/
+*.bak
+
+# IDE y sistema
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+.DS_Store
+Thumbs.db
+
+# Sin regla *.jar: plugin/junit-gen.jar se versiona (lo usan el plugin y los instaladores).

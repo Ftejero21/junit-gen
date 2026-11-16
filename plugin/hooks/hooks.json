@@ -1,0 +1,40 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__plugin_junit-gen_junit-gen__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "java",
+            "args": [
+              "-cp",
+              "${CLAUDE_PLUGIN_ROOT}/junit-gen.jar",
+              "com.junitgen.seguridad.GuardaTanda",
+              "uso",
+              "${CLAUDE_PLUGIN_DATA}"
+            ],
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "java",
+            "args": [
+              "-cp",
+              "${CLAUDE_PLUGIN_ROOT}/junit-gen.jar",
+              "com.junitgen.seguridad.GuardaTanda",
+              "comprobar",
+              "${CLAUDE_PLUGIN_DATA}"
+            ],
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

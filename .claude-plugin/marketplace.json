@@ -1,0 +1,15 @@
+{
+  "name": "junit-gen",
+  "description": "Marketplace de junit-gen: generador de tests unitarios JUnit 5 + Mockito para proyectos Java, de solo lectura sobre tu código.",
+  "owner": {
+    "name": "ftejero"
+  },
+  "plugins": [
+    {
+      "name": "junit-gen",
+      "source": "./plugin",
+      "description": "Genera, compila y ejecuta tests unitarios JUnit 5 + Mockito de tus servicios Java sin tocar tu proyecto.",
+      "category": "testing"
+    }
+  ]
+}

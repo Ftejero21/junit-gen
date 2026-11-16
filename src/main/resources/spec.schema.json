@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://junit-gen.local/spec.schema.json",
+  "title": "Spec de junit-gen v1",
+  "description": "Especificación de casos de prueba. La IA solo escribe este JSON; junit-gen valida, detecta duplicados y genera el código. Las expresiones son cadenas con código Java (se parsean y se reimprimen).",
+  "type": "object",
+  "required": ["version", "servicios"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"type": "integer", "const": 1},
+    "proyecto": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ruta": {"type": "string", "description": "Ruta del proyecto analizado (raíz del escaneo)."},
+        "modulo": {"type": ["string", "null"], "description": "Opcional: solo pista para desambiguar; junit-gen busca cada servicio en todos los módulos."}
+      }
+    },
+    "estilo": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Estilo deducido de los tests de ejemplo del proyecto.",
+      "properties": {
+        "patronNombre": {"type": "string", "description": "Patrón del nombre del método de test con {metodo} y {escenario}. Ej.: {metodo}_{escenario}"},
+        "displayName": {"type": "boolean", "description": "Añadir @DisplayName con la descripción (solo JUnit 5)."},
+        "comentariosGwt": {"type": "boolean", "description": "Añadir comentarios // given // when // then."},
+        "aserciones": {"type": "string", "enum": ["junit", "assertj", "auto"]},
+        "visibilidadClase": {"type": "string", "enum": ["package", "public"]},
+        "nombreCampoSut": {"type": "string", "description": "Nombre del campo del servicio bajo prueba. Ej.: service"}
+      }
+    },
+    "servicios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["clase", "casos"],
+        "additionalProperties": false,
+        "properties": {
+          "clase": {"type": "string", "description": "FQN del servicio (tal como lo devuelve escanear_proyecto)."},
+          "modulo": {"type": ["string", "null"], "description": "Opcional. Módulo (ruta relativa o nombre) del servicio; solo necesario si la misma clase existe en varios módulos."},
+          "claseTest": {"type": ["string", "null"], "description": "Nombre simple de la clase de test; null = <Servicio>Test (o <Servicio>GeneradoTest si ya existe)."},
+          "seleccion": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Funciones elegidas. Solo sin MCP (con MCP se ignora: usa seleccionar_funciones).",
+            "properties": {
+              "origen": {"type": "string", "enum": ["ia", "usuario", "java", "todas"]},
+              "funciones": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["nombre"], "properties": {"nombre": {"type": "string"}, "motivo": {"type": "string"}}}},
+              "omitidas": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["nombre"], "properties": {"nombre": {"type": "string"}, "motivo": {"type": "string"}}}}
+            }
+          },
+          "seleccionInformada": {"type": "string", "description": "La añade la herramienta: huella de la última selección de funciones escrita en informe.md."},
+          "imports": {"type": "array", "items": {"type": "string"}, "description": "FQN de tipos que la herramienta no pueda resolver sola."},
+          "construccion": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "argumentos": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Nombre → expresión Java. Dependencia de valor (VALOR_CONSTRUCTOR o campo @Value) → literal; dependencia mock → instancia real (p. ej. \"objectMapper\": \"new ObjectMapper()\"); campo de instancia del servicio → valor fijado por reflexión tras construir."},
+              "stubs": {
+                "type": "array",
+                "maxItems": 30,
+                "description": "Stubs lenient que se ejecutan en setUp ANTES de construir el servicio (los que necesita el constructor).",
+                "items": {
+                  "type": "object",
+                  "required": ["mock", "llamada"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "mock": {"type": "string", "description": "Nombre de una dependencia mock según detalle_servicio."},
+                    "llamada": {"type": "string", "description": "Llamada sobre el mock sin el receptor. Ej.: getTimeoutMs(). Encadenada solo en mocks profundos."},
+                    "devuelve": {"type": "string"},
+                    "devuelveSecuencia": {"type": "array", "items": {"type": "string"}},
+                    "lanza": {"type": "string", "description": "Tipo de excepción (IllegalStateException) o expresión (new X(\"msg\"))."},
+                    "responde": {"type": "string", "description": "Lambda Answer (Java ≥ 8)."},
+                    "forma": {"type": "string", "enum": ["auto", "when", "do"]}
+                  }
+                }
+              },
+              "profundos": {"type": "array", "items": {"type": "string"}, "description": "Mocks que se declaran con RETURNS_DEEP_STUBS (además de los profundo:true de detalle_servicio); permiten llamadas encadenadas."},
+              "postConstruct": {"type": "boolean", "description": "true para invocar los métodos @PostConstruct tras montar el servicio (por defecto no se invocan)."}
+            }
+          },
+          "fixtures": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["nombre", "tipo", "devuelve"],
+              "additionalProperties": false,
+              "properties": {
+                "nombre": {"type": "string"},
+                "tipo": {"type": "string"},
+                "parametros": {"type": "array", "items": {"type": "object", "required": ["tipo", "nombre"], "additionalProperties": false, "properties": {"tipo": {"type": "string"}, "nombre": {"type": "string"}}}},
+                "pasos": {"type": "array", "items": {"type": "string"}, "description": "Sentencias Java."},
+                "devuelve": {"type": "string", "description": "Expresión Java devuelta."}
+              }
+            }
+          },
+          "casos": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "metodo", "escenario", "argumentos", "esperado"],
+              "additionalProperties": false,
+              "properties": {
+                "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
+                "metodo": {"type": "string"},
+                "parametros": {"type": ["array", "null"], "items": {"type": "string"}, "description": "Tipos de los parámetros (solo si hay sobrecargas)."},
+                "escenario": {"type": "string", "description": "Escenario en camelCase."},
+                "descripcion": {"type": "string"},
+                "queHaceOriginal": {"type": "string", "description": "Qué hace la función original: 1 frase, máx. 160 caracteres. Obligatorio en casos nuevos."},
+                "queComprueba": {"type": "string", "description": "Qué comprueba este test: 1 frase, máx. 160 caracteres. Obligatorio en casos nuevos."},
+                "datos": {"type": "array", "items": {"type": "object", "required": ["tipo", "nombre"], "additionalProperties": false, "properties": {"tipo": {"type": "string"}, "nombre": {"type": "string"}, "valor": {"type": "string"}, "mock": {"type": "boolean"}}}},
+                "preparacion": {"type": "array", "items": {"type": "string"}, "description": "Sentencias Java previas, una por elemento (p. ej. u.setId(10L)); varias en una cadena se separan solas."},
+                "stubs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["mock", "llamada"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "mock": {"type": "string", "description": "Nombre de la dependencia según detalle_servicio, o un dato con mock:true."},
+                      "llamada": {"type": "string", "description": "Llamada sobre el mock sin el receptor. Ej.: findById(10L). Encadenada (a().b(x)) solo en mocks profundos."},
+                      "devuelve": {"type": "string"},
+                      "devuelveSecuencia": {"type": "array", "items": {"type": "string"}},
+                      "lanza": {"type": "string", "description": "Tipo de excepción (IllegalStateException) o expresión (new X(\"msg\"))."},
+                      "responde": {"type": "string", "description": "Lambda Answer (Java ≥ 8)."},
+                      "forma": {"type": "string", "enum": ["auto", "when", "do"]}
+                    }
+                  }
+                },
+                "estaticos": {"type": "array", "items": {"type": "object", "required": ["clase", "llamada"], "additionalProperties": false, "properties": {"clase": {"type": "string"}, "llamada": {"type": "string"}, "devuelve": {"type": "string"}, "lanza": {"type": "string"}}}},
+                "construcciones": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["clase"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "clase": {"type": "string"},
+                      "stubs": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": ["llamada"],
+                          "additionalProperties": false,
+                          "properties": {
+                            "mock": {"type": "string"},
+                            "llamada": {"type": "string"},
+                            "devuelve": {"type": "string"},
+                            "devuelveSecuencia": {"type": "array", "items": {"type": "string"}},
+                            "lanza": {"type": "string"},
+                            "responde": {"type": "string"},
+                            "forma": {"type": "string", "enum": ["auto", "when", "do"]}
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "argumentos": {"type": "array", "items": {"type": "string"}, "description": "Expresiones Java de los argumentos de la llamada al servicio."},
+                "esperado": {
+                  "type": "object",
+                  "required": ["tipo"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "tipo": {"type": "string", "enum": ["valor", "excepcion", "nulo", "noNulo", "verdadero", "falso", "sinRetorno", "aserciones"]},
+                    "valor": {"type": ["string", "null"], "description": "Expresión Java del valor esperado (tipo=valor)."},
+                    "excepcion": {"type": ["string", "null"], "description": "Nombre simple de la excepción (tipo=excepcion)."},
+                    "mensaje": {"type": ["string", "null"], "description": "Mensaje exacto (texto plano)."},
+                    "mensajeContiene": {"type": ["string", "null"], "description": "Fragmento del mensaje (texto plano)."}
+                  }
+                },
+                "aserciones": {"type": "array", "items": {"type": "object", "required": ["real", "tipo"], "additionalProperties": false, "properties": {"real": {"type": "string", "description": "Expresión sobre 'resultado' u otras variables."}, "tipo": {"type": "string", "enum": ["igual", "noIgual", "nulo", "noNulo", "verdadero", "falso", "mismo", "tamano", "vacio", "contiene"]}, "esperado": {"type": ["string", "null"]}}}},
+                "verificaciones": {"type": "array", "items": {"type": "object", "required": ["mock"], "additionalProperties": false, "properties": {"mock": {"type": "string"}, "llamada": {"type": "string", "description": "Encadenada solo en mocks profundos."}, "veces": {"type": "integer", "minimum": 0}, "sinInteracciones": {"type": "boolean"}}}},
+                "huella": {"type": "string", "description": "La añade la herramienta."},
+                "huellaEntrada": {"type": "string", "description": "La añade la herramienta."},
+                "estado": {"type": "string", "description": "La añade la herramienta."},
+                "intentosMontaje": {"type": "integer", "description": "La añade la herramienta."},
+                "veredictoIa": {"type": "string", "enum": ["error_ia", "bug_servicio", "dudoso"], "description": "La añade la herramienta (registrar_analisis_ia)."},
+                "motivoIa": {"type": "string", "description": "La añade la herramienta (registrar_analisis_ia)."},
+                "autorizacionCambio": {"type": "string", "enum": ["ajustar", "error_ia"], "description": "La añade la herramienta (decisión del usuario o veredicto error_ia); se consume al reemplazar."}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

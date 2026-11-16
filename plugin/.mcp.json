@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "junit-gen": {
+      "command": "java",
+      "args": [
+        "-Dfile.encoding=UTF-8",
+        "-Djunitgen.datos=${CLAUDE_PLUGIN_DATA}",
+        "-jar",
+        "${CLAUDE_PLUGIN_ROOT}/junit-gen.jar",
+        "mcp"
+      ]
+    }
+  }
+}

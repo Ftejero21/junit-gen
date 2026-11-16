@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "proyecto": {"ruta": "C:/proyectos/tienda", "modulo": null},
+  "estilo": {"patronNombre": "{metodo}_{escenario}", "displayName": false, "comentariosGwt": false,
+             "aserciones": "junit", "visibilidadClase": "package", "nombreCampoSut": "service"},
+  "servicios": [{
+    "clase": "com.ejemplo.tienda.pedidos.PedidoServiceImpl",
+    "claseTest": null,
+    "imports": ["com.ejemplo.tienda.error.SinStockException"],
+    "fixtures": [{"nombre": "pedido", "tipo": "Pedido",
+                  "parametros": [{"tipo": "Long", "nombre": "id"}],
+                  "pasos": ["Pedido p = new Pedido()", "p.setId(id)"], "devuelve": "p"}],
+    "casos": [{
+      "id": "crear-sin-stock",
+      "metodo": "crear", "parametros": ["PedidoRequest"],
+      "escenario": "lanzaSinStockSiNoHayUnidades",
+      "descripcion": "Rechaza el pedido si no hay stock suficiente del producto",
+      "queHaceOriginal": "Crea un pedido nuevo reservando el stock del producto pedido",
+      "queComprueba": "Que se lanza SinStockException y no se guarda el pedido si no hay stock",
+      "datos": [{"tipo": "PedidoRequest", "nombre": "request", "valor": "new PedidoRequest(42L, 3)"}],
+      "preparacion": [],
+      "stubs": [{"mock": "stockClient", "llamada": "disponible(42L)", "devuelve": "0"}],
+      "estaticos": [], "construcciones": [],
+      "argumentos": ["request"],
+      "esperado": {"tipo": "excepcion", "excepcion": "SinStockException", "mensaje": "Producto 42 sin stock", "mensajeContiene": null},
+      "aserciones": [],
+      "verificaciones": [{"mock": "pedidoRepository", "llamada": "save(any())", "veces": 0}]
+    }]
+  }]
+}

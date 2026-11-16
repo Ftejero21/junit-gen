@@ -1,0 +1,12 @@
+{
+  "name": "junit-gen",
+  "displayName": "junit-gen",
+  "description": "Genera, compila y ejecuta tests unitarios JUnit 5 + Mockito de tus servicios Java sin tocar tu proyecto.",
+  "author": {
+    "name": "ftejero"
+  },
+  "license": "MIT",
+  "keywords": ["java", "junit", "mockito", "tests", "testing", "spring", "mcp"],
+  "repository": "https://github.com/Ftejero21/junit-gen",
+  "homepage": "https://github.com/Ftejero21/junit-gen"
+}
