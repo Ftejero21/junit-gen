@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 898" width="1000" height="898" role="img" aria-labelledby="t d" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 974" width="1000" height="974" role="img" aria-labelledby="t d" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
 <title id="t">Comparativa: IA sola frente a junit-gen con Sonnet, Haiku y Opus 5.5</title>
-<desc id="d">Tabla con tiempo, tokens, coste y tests que pasan para 5, 15 y 25 servicios, con la IA sola y con junit-gen, y la mejora de junit-gen. Sonnet 5.5 con esfuerzo alto es el modelo recomendado.</desc>
+<desc id="d">Tabla con tiempo, tokens, coste y tests que pasan para 5, 15, 25 y 100 servicios, con la IA sola y con junit-gen, y la mejora de junit-gen. Sonnet 5.5 con esfuerzo alto es el modelo recomendado.</desc>
 <style>
 .sup{fill:#fcfcfb}.card{fill:#ffffff;stroke:#e4e3de}.cab{fill:#0f1b2d}.cabt{fill:#ffffff}.t1{fill:#0b0b0b}.t2{fill:#6b6a65}
 .zebra{fill:#f6f6f3}.grp{fill:#f0f4fa}.grpR{fill:#e8f1fd}.lin{stroke:#ecebe7}.rec{fill:#fff3d6}.rect{fill:#8a5a00}
@@ -9,12 +9,12 @@
 .zebra{fill:#1f1f1d}.grp{fill:#20262e}.grpR{fill:#1b2b40}.lin{stroke:#2b2b29}.rec{fill:#3a2e10}.rect{fill:#f5c35b}
 .pill{fill:#14361e}.pillt{fill:#7fdc95}.dot1{fill:#3987e5}.dot2{fill:#d95926}.marco{stroke:#3987e5}}
 </style>
-<rect class="sup" x="0" y="0" width="1000" height="898" rx="14"/>
+<rect class="sup" x="0" y="0" width="1000" height="974" rx="14"/>
 <text class="t1" x="24" y="44" font-size="22" font-weight="700">¿Cuánto ahorra junit-gen?</text>
 <text class="t2" x="24" y="70" font-size="14">Misma tarea, mismo proyecto Spring Boot real y mismo modelo: la IA sola escribe los tests frente a la IA + junit-gen</text>
 <circle class="dot1" cx="30" cy="96" r="6"/><text class="t2" x="42" y="101" font-size="13">Solo IA</text>
 <circle class="dot2" cx="120" cy="96" r="6"/><text class="t1" x="132" y="101" font-size="13" font-weight="700">Con junit-gen</text>
-<rect class="card" x="24" y="114" width="952" height="718" rx="12"/>
+<rect class="card" x="24" y="114" width="952" height="776" rx="12"/>
 <path class="cab" d="M24,126 q0,-12 12,-12 h928 q12,0 12,12 v24 h-952 z"/>
 <text class="cabt" x="44" y="143" font-size="13" font-weight="700">Servicios</text>
 <text class="cabt" x="170" y="143" font-size="13" font-weight="700">Tiempo</text>
@@ -73,159 +73,182 @@
 <line class="lin" x1="24" x2="976" y1="312" y2="312"/>
 <text class="t1" x="44" y="347" font-size="20" font-weight="700">25</text>
 <circle class="dot2" cx="175" cy="333" r="4.5"/>
-<text class="t1" x="185" y="338" font-size="16" font-weight="700">4 min 38 s</text>
+<text class="t1" x="185" y="338" font-size="16" font-weight="700">2 min 03 s</text>
 <circle class="dot1" cx="175" cy="353" r="3.5"/>
 <text class="t2" x="185" y="357" font-size="12.5">14 min 16 s</text>
 <circle class="dot2" cx="365" cy="333" r="4.5"/>
-<text class="t1" x="375" y="338" font-size="16" font-weight="700">3,16 M</text>
+<text class="t1" x="375" y="338" font-size="16" font-weight="700">3,09 M</text>
 <circle class="dot1" cx="365" cy="353" r="3.5"/>
 <text class="t2" x="375" y="357" font-size="12.5">11,15 M</text>
 <circle class="dot2" cx="525" cy="333" r="4.5"/>
-<text class="t1" x="535" y="338" font-size="16" font-weight="700">2,15 $</text>
+<text class="t1" x="535" y="338" font-size="16" font-weight="700">2,45 $</text>
 <circle class="dot1" cx="525" cy="353" r="3.5"/>
 <text class="t2" x="535" y="357" font-size="12.5">3,17 $</text>
 <circle class="dot2" cx="665" cy="333" r="4.5"/>
-<text class="t1" x="675" y="338" font-size="16" font-weight="700">123/123</text>
+<text class="t1" x="675" y="338" font-size="16" font-weight="700">132/132</text>
 <circle class="dot1" cx="665" cy="353" r="3.5"/>
 <text class="t2" x="675" y="357" font-size="12.5">219/219</text>
 <rect class="pill" x="790" y="321" width="118" height="24" rx="12"/>
-<text class="pillt" x="849" y="338" font-size="13.5" font-weight="700" text-anchor="middle">3,1× más rápido</text>
-<text class="t2" x="794" y="360" font-size="12.5">−72 % tokens · −32 % coste</text>
-<rect class="marco" x="25" y="150" width="950" height="220" stroke-width="2" rx="2"/>
-<rect class="grp" x="25" y="370" width="950" height="46"/>
-<text class="t1" x="44" y="399" font-size="16" font-weight="700">Haiku 5.5</text>
-<text class="t2" x="144" y="399" font-size="13">esfuerzo alto</text>
-<line class="lin" x1="24" x2="976" y1="416" y2="416"/>
-<text class="t1" x="44" y="451" font-size="20" font-weight="700">5</text>
-<circle class="dot2" cx="175" cy="437" r="4.5"/>
-<text class="t1" x="185" y="442" font-size="16" font-weight="700">5 min 02 s</text>
-<circle class="dot1" cx="175" cy="457" r="3.5"/>
-<text class="t2" x="185" y="461" font-size="12.5">6 min 48 s</text>
-<circle class="dot2" cx="365" cy="437" r="4.5"/>
-<text class="t1" x="375" y="442" font-size="16" font-weight="700">1,82 M</text>
-<circle class="dot1" cx="365" cy="457" r="3.5"/>
-<text class="t2" x="375" y="461" font-size="12.5">4,54 M</text>
-<circle class="dot2" cx="525" cy="437" r="4.5"/>
-<text class="t1" x="535" y="442" font-size="16" font-weight="700">0,16 $</text>
-<circle class="dot1" cx="525" cy="457" r="3.5"/>
-<text class="t2" x="535" y="461" font-size="12.5">—</text>
-<circle class="dot2" cx="665" cy="437" r="4.5"/>
-<text class="t1" x="675" y="442" font-size="16" font-weight="700">27/27</text>
-<circle class="dot1" cx="665" cy="457" r="3.5"/>
-<text class="t2" x="675" y="461" font-size="12.5">35/35</text>
-<rect class="pill" x="790" y="425" width="118" height="24" rx="12"/>
-<text class="pillt" x="849" y="442" font-size="13.5" font-weight="700" text-anchor="middle">1,4× más rápido</text>
-<text class="t2" x="794" y="464" font-size="12.5">−60 % tokens</text>
-<rect class="zebra" x="25" y="474" width="950" height="58"/>
+<text class="pillt" x="849" y="338" font-size="13.5" font-weight="700" text-anchor="middle">7,0× más rápido</text>
+<text class="t2" x="794" y="360" font-size="12.5">−72 % tokens · −23 % coste</text>
+<rect class="zebra" x="25" y="370" width="950" height="58"/>
+<line class="lin" x1="24" x2="976" y1="370" y2="370"/>
+<text class="t1" x="44" y="405" font-size="20" font-weight="700">100</text>
+<circle class="dot2" cx="175" cy="391" r="4.5"/>
+<text class="t1" x="185" y="396" font-size="16" font-weight="700">7 min 40 s</text>
+<circle class="dot1" cx="175" cy="411" r="3.5"/>
+<text class="t2" x="185" y="415" font-size="12.5">+58 min (parada)</text>
+<circle class="dot2" cx="365" cy="391" r="4.5"/>
+<text class="t1" x="375" y="396" font-size="16" font-weight="700">27,22 M</text>
+<circle class="dot1" cx="365" cy="411" r="3.5"/>
+<text class="t2" x="375" y="415" font-size="12.5">153,76 M</text>
+<circle class="dot2" cx="525" cy="391" r="4.5"/>
+<text class="t1" x="535" y="396" font-size="16" font-weight="700">12,20 $</text>
+<circle class="dot1" cx="525" cy="411" r="3.5"/>
+<text class="t2" x="535" y="415" font-size="12.5">≈ 28 $ (est.)</text>
+<circle class="dot2" cx="665" cy="391" r="4.5"/>
+<text class="t1" x="675" y="396" font-size="16" font-weight="700">643/643</text>
+<circle class="dot1" cx="665" cy="411" r="3.5"/>
+<text class="t2" x="675" y="415" font-size="12.5">sin terminar</text>
+<rect class="pill" x="790" y="379" width="132" height="24" rx="12"/>
+<text class="pillt" x="856" y="396" font-size="13.5" font-weight="700" text-anchor="middle">+7,6× más rápido</text>
+<text class="t2" x="794" y="418" font-size="12.5">−82 % tokens · ≈ −57 % coste</text>
+<rect class="marco" x="25" y="150" width="950" height="278" stroke-width="2" rx="2"/>
+<rect class="grp" x="25" y="428" width="950" height="46"/>
+<text class="t1" x="44" y="457" font-size="16" font-weight="700">Haiku 5.5</text>
+<text class="t2" x="144" y="457" font-size="13">esfuerzo alto</text>
 <line class="lin" x1="24" x2="976" y1="474" y2="474"/>
-<text class="t1" x="44" y="509" font-size="20" font-weight="700">15</text>
+<text class="t1" x="44" y="509" font-size="20" font-weight="700">5</text>
 <circle class="dot2" cx="175" cy="495" r="4.5"/>
-<text class="t1" x="185" y="500" font-size="16" font-weight="700">5 min 21 s</text>
+<text class="t1" x="185" y="500" font-size="16" font-weight="700">5 min 02 s</text>
 <circle class="dot1" cx="175" cy="515" r="3.5"/>
-<text class="t2" x="185" y="519" font-size="12.5">14 min 17 s</text>
+<text class="t2" x="185" y="519" font-size="12.5">6 min 48 s</text>
 <circle class="dot2" cx="365" cy="495" r="4.5"/>
-<text class="t1" x="375" y="500" font-size="16" font-weight="700">3,12 M</text>
+<text class="t1" x="375" y="500" font-size="16" font-weight="700">1,82 M</text>
 <circle class="dot1" cx="365" cy="515" r="3.5"/>
-<text class="t2" x="375" y="519" font-size="12.5">11,40 M</text>
+<text class="t2" x="375" y="519" font-size="12.5">4,54 M</text>
 <circle class="dot2" cx="525" cy="495" r="4.5"/>
-<text class="t1" x="535" y="500" font-size="16" font-weight="700">0,20 $</text>
+<text class="t1" x="535" y="500" font-size="16" font-weight="700">0,16 $</text>
 <circle class="dot1" cx="525" cy="515" r="3.5"/>
-<text class="t2" x="535" y="519" font-size="12.5">1,10 $</text>
+<text class="t2" x="535" y="519" font-size="12.5">—</text>
 <circle class="dot2" cx="665" cy="495" r="4.5"/>
-<text class="t1" x="675" y="500" font-size="16" font-weight="700">71/71</text>
+<text class="t1" x="675" y="500" font-size="16" font-weight="700">27/27</text>
 <circle class="dot1" cx="665" cy="515" r="3.5"/>
-<text class="t2" x="675" y="519" font-size="12.5">94/95</text>
+<text class="t2" x="675" y="519" font-size="12.5">35/35</text>
 <rect class="pill" x="790" y="483" width="118" height="24" rx="12"/>
-<text class="pillt" x="849" y="500" font-size="13.5" font-weight="700" text-anchor="middle">2,7× más rápido</text>
-<text class="t2" x="794" y="522" font-size="12.5">−73 % tokens · −81 % coste</text>
+<text class="pillt" x="849" y="500" font-size="13.5" font-weight="700" text-anchor="middle">1,4× más rápido</text>
+<text class="t2" x="794" y="522" font-size="12.5">−60 % tokens</text>
+<rect class="zebra" x="25" y="532" width="950" height="58"/>
 <line class="lin" x1="24" x2="976" y1="532" y2="532"/>
-<text class="t1" x="44" y="567" font-size="20" font-weight="700">25</text>
+<text class="t1" x="44" y="567" font-size="20" font-weight="700">15</text>
 <circle class="dot2" cx="175" cy="553" r="4.5"/>
-<text class="t1" x="185" y="558" font-size="16" font-weight="700">6 min 06 s</text>
+<text class="t1" x="185" y="558" font-size="16" font-weight="700">5 min 21 s</text>
 <circle class="dot1" cx="175" cy="573" r="3.5"/>
-<text class="t2" x="185" y="577" font-size="12.5">12 min 45 s</text>
+<text class="t2" x="185" y="577" font-size="12.5">14 min 17 s</text>
 <circle class="dot2" cx="365" cy="553" r="4.5"/>
-<text class="t1" x="375" y="558" font-size="16" font-weight="700">4,25 M</text>
+<text class="t1" x="375" y="558" font-size="16" font-weight="700">3,12 M</text>
 <circle class="dot1" cx="365" cy="573" r="3.5"/>
-<text class="t2" x="375" y="577" font-size="12.5">11,88 M</text>
+<text class="t2" x="375" y="577" font-size="12.5">11,40 M</text>
 <circle class="dot2" cx="525" cy="553" r="4.5"/>
-<text class="t1" x="535" y="558" font-size="16" font-weight="700">0,26 $</text>
+<text class="t1" x="535" y="558" font-size="16" font-weight="700">0,20 $</text>
 <circle class="dot1" cx="525" cy="573" r="3.5"/>
-<text class="t2" x="535" y="577" font-size="12.5">1,04 $</text>
+<text class="t2" x="535" y="577" font-size="12.5">1,10 $</text>
 <circle class="dot2" cx="665" cy="553" r="4.5"/>
-<text class="t1" x="675" y="558" font-size="16" font-weight="700">128/129</text>
+<text class="t1" x="675" y="558" font-size="16" font-weight="700">71/71</text>
 <circle class="dot1" cx="665" cy="573" r="3.5"/>
-<text class="t2" x="675" y="577" font-size="12.5">115/116</text>
+<text class="t2" x="675" y="577" font-size="12.5">94/95</text>
 <rect class="pill" x="790" y="541" width="118" height="24" rx="12"/>
-<text class="pillt" x="849" y="558" font-size="13.5" font-weight="700" text-anchor="middle">2,1× más rápido</text>
-<text class="t2" x="794" y="580" font-size="12.5">−64 % tokens · −75 % coste</text>
-<rect class="grp" x="25" y="590" width="950" height="46"/>
-<text class="t1" x="44" y="619" font-size="16" font-weight="700">Opus 5.5</text>
-<text class="t2" x="144" y="619" font-size="13">esfuerzo alto</text>
-<line class="lin" x1="24" x2="976" y1="636" y2="636"/>
-<text class="t1" x="44" y="671" font-size="20" font-weight="700">5</text>
-<circle class="dot2" cx="175" cy="657" r="4.5"/>
-<text class="t1" x="185" y="662" font-size="16" font-weight="700">5 min 15 s</text>
-<circle class="dot1" cx="175" cy="677" r="3.5"/>
-<text class="t2" x="185" y="681" font-size="12.5">6 min 23 s</text>
-<circle class="dot2" cx="365" cy="657" r="4.5"/>
-<text class="t1" x="375" y="662" font-size="16" font-weight="700">1,27 M</text>
-<circle class="dot1" cx="365" cy="677" r="3.5"/>
-<text class="t2" x="375" y="681" font-size="12.5">2,18 M</text>
-<circle class="dot2" cx="525" cy="657" r="4.5"/>
-<text class="t1" x="535" y="662" font-size="16" font-weight="700">1,87 $</text>
-<circle class="dot1" cx="525" cy="677" r="3.5"/>
-<text class="t2" x="535" y="681" font-size="12.5">1,98 $</text>
-<circle class="dot2" cx="665" cy="657" r="4.5"/>
-<text class="t1" x="675" y="662" font-size="16" font-weight="700">27/27</text>
-<circle class="dot1" cx="665" cy="677" r="3.5"/>
-<text class="t2" x="675" y="681" font-size="12.5">55/55</text>
-<rect class="pill" x="790" y="645" width="118" height="24" rx="12"/>
-<text class="pillt" x="849" y="662" font-size="13.5" font-weight="700" text-anchor="middle">1,2× más rápido</text>
-<text class="t2" x="794" y="684" font-size="12.5">−42 % tokens · −6 % coste</text>
-<rect class="zebra" x="25" y="694" width="950" height="58"/>
+<text class="pillt" x="849" y="558" font-size="13.5" font-weight="700" text-anchor="middle">2,7× más rápido</text>
+<text class="t2" x="794" y="580" font-size="12.5">−73 % tokens · −81 % coste</text>
+<line class="lin" x1="24" x2="976" y1="590" y2="590"/>
+<text class="t1" x="44" y="625" font-size="20" font-weight="700">25</text>
+<circle class="dot2" cx="175" cy="611" r="4.5"/>
+<text class="t1" x="185" y="616" font-size="16" font-weight="700">6 min 06 s</text>
+<circle class="dot1" cx="175" cy="631" r="3.5"/>
+<text class="t2" x="185" y="635" font-size="12.5">12 min 45 s</text>
+<circle class="dot2" cx="365" cy="611" r="4.5"/>
+<text class="t1" x="375" y="616" font-size="16" font-weight="700">4,25 M</text>
+<circle class="dot1" cx="365" cy="631" r="3.5"/>
+<text class="t2" x="375" y="635" font-size="12.5">11,88 M</text>
+<circle class="dot2" cx="525" cy="611" r="4.5"/>
+<text class="t1" x="535" y="616" font-size="16" font-weight="700">0,26 $</text>
+<circle class="dot1" cx="525" cy="631" r="3.5"/>
+<text class="t2" x="535" y="635" font-size="12.5">1,04 $</text>
+<circle class="dot2" cx="665" cy="611" r="4.5"/>
+<text class="t1" x="675" y="616" font-size="16" font-weight="700">128/129</text>
+<circle class="dot1" cx="665" cy="631" r="3.5"/>
+<text class="t2" x="675" y="635" font-size="12.5">115/116</text>
+<rect class="pill" x="790" y="599" width="118" height="24" rx="12"/>
+<text class="pillt" x="849" y="616" font-size="13.5" font-weight="700" text-anchor="middle">2,1× más rápido</text>
+<text class="t2" x="794" y="638" font-size="12.5">−64 % tokens · −75 % coste</text>
+<rect class="grp" x="25" y="648" width="950" height="46"/>
+<text class="t1" x="44" y="677" font-size="16" font-weight="700">Opus 5.5</text>
+<text class="t2" x="144" y="677" font-size="13">esfuerzo alto</text>
 <line class="lin" x1="24" x2="976" y1="694" y2="694"/>
-<text class="t1" x="44" y="729" font-size="20" font-weight="700">15</text>
+<text class="t1" x="44" y="729" font-size="20" font-weight="700">5</text>
 <circle class="dot2" cx="175" cy="715" r="4.5"/>
-<text class="t1" x="185" y="720" font-size="16" font-weight="700">5 min 57 s</text>
+<text class="t1" x="185" y="720" font-size="16" font-weight="700">5 min 15 s</text>
 <circle class="dot1" cx="175" cy="735" r="3.5"/>
-<text class="t2" x="185" y="739" font-size="12.5">10 min 52 s</text>
+<text class="t2" x="185" y="739" font-size="12.5">6 min 23 s</text>
 <circle class="dot2" cx="365" cy="715" r="4.5"/>
-<text class="t1" x="375" y="720" font-size="16" font-weight="700">2,22 M</text>
+<text class="t1" x="375" y="720" font-size="16" font-weight="700">1,27 M</text>
 <circle class="dot1" cx="365" cy="735" r="3.5"/>
-<text class="t2" x="375" y="739" font-size="12.5">5,66 M</text>
+<text class="t2" x="375" y="739" font-size="12.5">2,18 M</text>
 <circle class="dot2" cx="525" cy="715" r="4.5"/>
-<text class="t1" x="535" y="720" font-size="16" font-weight="700">3,23 $</text>
+<text class="t1" x="535" y="720" font-size="16" font-weight="700">1,87 $</text>
 <circle class="dot1" cx="525" cy="735" r="3.5"/>
-<text class="t2" x="535" y="739" font-size="12.5">4,05 $</text>
+<text class="t2" x="535" y="739" font-size="12.5">1,98 $</text>
 <circle class="dot2" cx="665" cy="715" r="4.5"/>
-<text class="t1" x="675" y="720" font-size="16" font-weight="700">74/74</text>
+<text class="t1" x="675" y="720" font-size="16" font-weight="700">27/27</text>
 <circle class="dot1" cx="665" cy="735" r="3.5"/>
-<text class="t2" x="675" y="739" font-size="12.5">119/119</text>
+<text class="t2" x="675" y="739" font-size="12.5">55/55</text>
 <rect class="pill" x="790" y="703" width="118" height="24" rx="12"/>
-<text class="pillt" x="849" y="720" font-size="13.5" font-weight="700" text-anchor="middle">1,8× más rápido</text>
-<text class="t2" x="794" y="742" font-size="12.5">−61 % tokens · −20 % coste</text>
+<text class="pillt" x="849" y="720" font-size="13.5" font-weight="700" text-anchor="middle">1,2× más rápido</text>
+<text class="t2" x="794" y="742" font-size="12.5">−42 % tokens · −6 % coste</text>
+<rect class="zebra" x="25" y="752" width="950" height="58"/>
 <line class="lin" x1="24" x2="976" y1="752" y2="752"/>
-<text class="t1" x="44" y="787" font-size="20" font-weight="700">25</text>
+<text class="t1" x="44" y="787" font-size="20" font-weight="700">15</text>
 <circle class="dot2" cx="175" cy="773" r="4.5"/>
-<text class="t1" x="185" y="778" font-size="16" font-weight="700">8 min 51 s</text>
+<text class="t1" x="185" y="778" font-size="16" font-weight="700">5 min 57 s</text>
 <circle class="dot1" cx="175" cy="793" r="3.5"/>
-<text class="t2" x="185" y="797" font-size="12.5">16 min 38 s</text>
+<text class="t2" x="185" y="797" font-size="12.5">10 min 52 s</text>
 <circle class="dot2" cx="365" cy="773" r="4.5"/>
-<text class="t1" x="375" y="778" font-size="16" font-weight="700">3,76 M</text>
+<text class="t1" x="375" y="778" font-size="16" font-weight="700">2,22 M</text>
 <circle class="dot1" cx="365" cy="793" r="3.5"/>
-<text class="t2" x="375" y="797" font-size="12.5">9,50 M</text>
+<text class="t2" x="375" y="797" font-size="12.5">5,66 M</text>
 <circle class="dot2" cx="525" cy="773" r="4.5"/>
-<text class="t1" x="535" y="778" font-size="16" font-weight="700">4,86 $</text>
+<text class="t1" x="535" y="778" font-size="16" font-weight="700">3,23 $</text>
 <circle class="dot1" cx="525" cy="793" r="3.5"/>
-<text class="t2" x="535" y="797" font-size="12.5">5,79 $</text>
+<text class="t2" x="535" y="797" font-size="12.5">4,05 $</text>
 <circle class="dot2" cx="665" cy="773" r="4.5"/>
-<text class="t1" x="675" y="778" font-size="16" font-weight="700">134/134</text>
+<text class="t1" x="675" y="778" font-size="16" font-weight="700">74/74</text>
 <circle class="dot1" cx="665" cy="793" r="3.5"/>
-<text class="t2" x="675" y="797" font-size="12.5">178/178</text>
+<text class="t2" x="675" y="797" font-size="12.5">119/119</text>
 <rect class="pill" x="790" y="761" width="118" height="24" rx="12"/>
-<text class="pillt" x="849" y="778" font-size="13.5" font-weight="700" text-anchor="middle">1,9× más rápido</text>
-<text class="t2" x="794" y="800" font-size="12.5">−60 % tokens · −16 % coste</text>
-<text class="t2" x="24" y="862" font-size="12">Claude Code CLI, esfuerzo alto. Tests de «solo IA» verificados con Maven. Coste según el CLI («—»: ejecución sin dato).</text>
-<text class="t2" x="24" y="880" font-size="12">La IA sola escribe más tests por servicio; junit-gen limita los casos por función y descarta duplicados.</text>
+<text class="pillt" x="849" y="778" font-size="13.5" font-weight="700" text-anchor="middle">1,8× más rápido</text>
+<text class="t2" x="794" y="800" font-size="12.5">−61 % tokens · −20 % coste</text>
+<line class="lin" x1="24" x2="976" y1="810" y2="810"/>
+<text class="t1" x="44" y="845" font-size="20" font-weight="700">25</text>
+<circle class="dot2" cx="175" cy="831" r="4.5"/>
+<text class="t1" x="185" y="836" font-size="16" font-weight="700">8 min 51 s</text>
+<circle class="dot1" cx="175" cy="851" r="3.5"/>
+<text class="t2" x="185" y="855" font-size="12.5">16 min 38 s</text>
+<circle class="dot2" cx="365" cy="831" r="4.5"/>
+<text class="t1" x="375" y="836" font-size="16" font-weight="700">3,76 M</text>
+<circle class="dot1" cx="365" cy="851" r="3.5"/>
+<text class="t2" x="375" y="855" font-size="12.5">9,50 M</text>
+<circle class="dot2" cx="525" cy="831" r="4.5"/>
+<text class="t1" x="535" y="836" font-size="16" font-weight="700">4,86 $</text>
+<circle class="dot1" cx="525" cy="851" r="3.5"/>
+<text class="t2" x="535" y="855" font-size="12.5">5,79 $</text>
+<circle class="dot2" cx="665" cy="831" r="4.5"/>
+<text class="t1" x="675" y="836" font-size="16" font-weight="700">134/134</text>
+<circle class="dot1" cx="665" cy="851" r="3.5"/>
+<text class="t2" x="675" y="855" font-size="12.5">178/178</text>
+<rect class="pill" x="790" y="819" width="118" height="24" rx="12"/>
+<text class="pillt" x="849" y="836" font-size="13.5" font-weight="700" text-anchor="middle">1,9× más rápido</text>
+<text class="t2" x="794" y="858" font-size="12.5">−60 % tokens · −16 % coste</text>
+<text class="t2" x="24" y="920" font-size="12">Claude Code CLI, esfuerzo alto. Tests de «solo IA» verificados con Maven. Coste según el CLI («—»: ejecución sin dato).</text>
+<text class="t2" x="24" y="938" font-size="12">La IA sola escribe más tests por servicio; junit-gen limita los casos por función y descarta duplicados.</text>
+<text class="t2" x="24" y="956" font-size="12">100 servicios con Sonnet: la IA sola se paró a los 58 min con 98 de 100 servicios hechos; su coste es una estimación.</text>
 </svg>

@@ -22,6 +22,80 @@ Sin tocar ni una línea de tu proyecto.
 
 ---
 
+## ¿Por qué junit-gen?
+
+Pedirle tests a una IA "a pelo" suele acabar igual: tests que no compilan, mocks inventados, imports que no existen y un `assertEquals` cambiado para que pase. Y tú revisando todo a mano. Y además es lento: la IA escribe cada archivo de test palabra a palabra.
+
+### ⚡ Los tests los escribe una aplicación Java, no la IA
+
+junit-gen es una **aplicación Java** que analiza tu proyecto y **genera ella misma el código de los tests**, en milisegundos. La IA solo le dice *qué* probar con unas pocas líneas de JSON; todo el código lo escribe, compila y ejecuta junit-gen.
+
+- 🚀 **Hasta 7,6× más rápido** que si la IA escribiera cada test: la IA genera un spec corto en vez de archivos enteros, y en Claude Code los servicios se reparten entre subagentes que trabajan **en paralelo**.
+- 💸 **Gasta mucha menos IA**: entre un 42 % y un 82 % menos de tokens y hasta un 81 % menos de coste en las pruebas medidas (Haiku, Sonnet y Opus 5.5).
+- 🎯 **Resultado uniforme y fiable**: mismo estilo en todos los tests, imports y firmas reales sacados de tu código, sin inventos.
+- ♻️ **Regenerar no cuesta IA**: a partir del `spec.json` junit-gen vuelve a escribir los tests al instante.
+
+**junit-gen cambia el reparto:**
+
+| La IA (Copilot, Claude…) | junit-gen |
+|---|---|
+| Elige las funciones importantes de cada servicio | Escanea el proyecto y le da la estructura real de cada clase |
+| Propone los casos: escenario, datos, mocks y resultado esperado | Valida, descarta duplicados y escribe los `.java` con una plantilla uniforme |
+| Corrige los casos que fallan | Compila y ejecuta cada test en una carpeta temporal y le dice **exactamente** por qué falla |
+| — | Arregla solo los fallos mecánicos, sin gastar IA |
+| — | Rechaza los "arreglos" que rebajan el test |
+| — | Te deja un informe en lenguaje llano |
+
+> La IA **nunca escribe código Java**. Solo rellena un spec JSON. Por eso los tests salen uniformes, compilan y se pueden regenerar sin volver a gastar IA.
+
+### 📊 Medido, no prometido
+
+Mismo proyecto real (Spring Boot, 2 módulos), mismos servicios y tres modelos (Claude Haiku, Sonnet y Opus 5.5, esfuerzo alto, Claude Code CLI). «Solo IA» = pedirle a la IA que escriba, compile y arregle los tests por su cuenta.
+
+![¿Cuánto ahorra junit-gen? Tiempo, tokens, coste y tests que pasan con Sonnet, Haiku y Opus 5.5 para 5, 15, 25 y 100 servicios, IA sola frente a junit-gen](docs/img/comparativa-tabla.svg)
+
+Con 25 servicios, la tanda completa tarda **2 min 03 s con Sonnet + junit-gen**, frente a 12–17 min de cualquier modelo trabajando solo. Con **100 servicios** junit-gen terminó en **7 min 40 s** con 643 tests que pasan; Sonnet solo seguía trabajando a los 58 min (98 de 100 servicios) y había gastado más de 5 veces más tokens. En todas las ejecuciones los tests que entrega junit-gen compilan y pasan, y junit-gen no tocó ni un archivo del proyecto; las IAs solas, en cambio, modificaron, apartaron o sobrescribieron tests que ya existían. Con pocos servicios la IA sola escribe más tests por servicio (junit-gen limita los casos por función y descarta duplicados). Los resultados varían entre ejecuciones y dependen del proyecto.
+
+> ### ⭐ Modelo recomendado: **Sonnet 5.5 con esfuerzo alto**
+> Es la combinación más rápida y equilibrada: fue la más rápida en todos los tamaños, todos sus tests acabaron pasando y gasta bastante menos que Opus. Haiku es el más barato, pero falla más casos a la primera y la fase de arreglo lo hace más lento; Opus es igual de fiable pero más lento y caro.
+
+---
+
+## 🚀 Qué pasa cuando lo pides
+
+```
+/generartest genérame los tests de 25 servicios
+```
+
+Tú solo escribes la frase. A partir de ahí todo va solo:
+
+1. **🔍 Lee tu proyecto, sin tocarlo.** junit-gen recorre el código (Maven o Gradle, también multimódulo), localiza los servicios y mira cuáles ya tienen tests. La primera vez te pregunta en qué carpeta guardar los tests nuevos.
+2. **📋 Elige los servicios.** Si dices un número, los escoge él; si nombras servicios, usa esos.
+3. **👥 Reparte el trabajo.** En Claude Code (y en los planes de pago de Copilot) divide los servicios en bloques y lanza varios **subagentes a la vez**, cada uno con su parte. Si uno termina antes, coge de la **cola** los servicios que nadie ha empezado, así ninguno se queda parado.
+4. **🧠 La IA decide qué probar.** En cada servicio elige las funciones con más lógica de negocio y describe los casos en unas pocas líneas de JSON: el caso normal, los errores y los límites, y qué debería pasar en cada uno.
+5. **⚙️ junit-gen escribe los tests.** Convierte ese JSON en clases JUnit 5 + Mockito con los imports, firmas y tipos reales de tu código. La IA no escribe ni una línea de Java.
+6. **▶️ Los compila y los ejecuta al momento.** En una carpeta temporal aparte y varios servicios a la vez, mientras la IA sigue con el siguiente.
+7. **🛠️ Arregla lo que falle, al final.** Primero lo mecánico, sin gastar IA (matchers mezclados, stubs que sobran, imports). El resto vuelve a la IA con el error exacto y pistas concretas. Si el fallo parece un bug real de tu código, no se maquilla: se marca como *posible bug*.
+8. **📄 Te entrega el resultado.** Un resumen en el chat, los tests listos para copiar y un `informe.md` en lenguaje llano: qué se probó, por qué, qué falló, qué se arregló y dónde va cada archivo.
+
+| Resultado | Cifra |
+|---|---|
+| Casos generados | 132 |
+| Ejecutados | 132 |
+| Pasan | 132 |
+| Descartados por duplicado | 2 |
+| Arreglados al final | 1 |
+| Posibles bugs | 0 |
+| Servicios completados | 25 de 25 |
+
+*(Ejecución real: 25 servicios de un proyecto Spring Boot con 2 módulos, Sonnet 5.5 con esfuerzo alto, 2 min 03 s.)*
+
+> **¿Y si es el proyecto entero?** `/generartest todos` hace lo mismo por **oleadas** de 25 servicios: antes de empezar te dice cuánto tardará y costará más o menos, te pide confirmación una sola vez y después encadena las oleadas solo. Si se corta, `/generartest continuar` sigue por donde iba.
+
+> **El último paso es tuyo:** junit-gen nunca copia nada a tu proyecto. Revisas los tests y los copias a `src/test/java` cuando quieras.
+
+---
+
 ## 💬 Pídelo como se lo pedirías a un compañero
 
 No hace falta aprender comandos. Escribe `/generartest` y lo que quieres:
@@ -54,45 +128,6 @@ No hace falta aprender comandos. Escribe `/generartest` y lo que quieres:
 
 ---
 
-## ¿Por qué junit-gen?
-
-Pedirle tests a una IA "a pelo" suele acabar igual: tests que no compilan, mocks inventados, imports que no existen y un `assertEquals` cambiado para que pase. Y tú revisando todo a mano. Y además es lento: la IA escribe cada archivo de test palabra a palabra.
-
-### ⚡ Los tests los escribe una aplicación Java, no la IA
-
-junit-gen es una **aplicación Java** que analiza tu proyecto y **genera ella misma el código de los tests**, en milisegundos. La IA solo le dice *qué* probar con unas pocas líneas de JSON; todo el código lo escribe, compila y ejecuta junit-gen.
-
-- 🚀 **Hasta 3,8× más rápido** que si la IA escribiera cada test: la IA genera un spec corto en vez de archivos enteros, y en Claude Code los servicios se reparten entre subagentes que trabajan **en paralelo**.
-- 💸 **Gasta mucha menos IA**: entre un 42 % y un 73 % menos de tokens y hasta un 81 % menos de coste en las pruebas medidas (Haiku, Sonnet y Opus 5.5).
-- 🎯 **Resultado uniforme y fiable**: mismo estilo en todos los tests, imports y firmas reales sacados de tu código, sin inventos.
-- ♻️ **Regenerar no cuesta IA**: a partir del `spec.json` junit-gen vuelve a escribir los tests al instante.
-
-**junit-gen cambia el reparto:**
-
-| La IA (Copilot, Claude…) | junit-gen |
-|---|---|
-| Elige las funciones importantes de cada servicio | Escanea el proyecto y le da la estructura real de cada clase |
-| Propone los casos: escenario, datos, mocks y resultado esperado | Valida, descarta duplicados y escribe los `.java` con una plantilla uniforme |
-| Corrige los casos que fallan | Compila y ejecuta cada test en una carpeta temporal y le dice **exactamente** por qué falla |
-| — | Arregla solo los fallos mecánicos, sin gastar IA |
-| — | Rechaza los "arreglos" que rebajan el test |
-| — | Te deja un informe en lenguaje llano |
-
-> La IA **nunca escribe código Java**. Solo rellena un spec JSON. Por eso los tests salen uniformes, compilan y se pueden regenerar sin volver a gastar IA.
-
-### 📊 Medido, no prometido
-
-Mismo proyecto real (Spring Boot, 2 módulos), mismos servicios y tres modelos (Claude Haiku, Sonnet y Opus 5.5, esfuerzo alto, Claude Code CLI). «Solo IA» = pedirle a la IA que escriba, compile y arregle los tests por su cuenta.
-
-![¿Cuánto ahorra junit-gen? Tiempo, tokens, coste y tests que pasan con Sonnet, Haiku y Opus 5.5 para 5, 15 y 25 servicios, IA sola frente a junit-gen](docs/img/comparativa-tabla.svg)
-
-Con 25 servicios, la tanda completa tarda **4 min 38 s con Sonnet + junit-gen**, frente a 12–17 min de cualquier modelo trabajando solo. En todas las ejecuciones los tests que entrega junit-gen compilan y pasan, y junit-gen no tocó ni un archivo del proyecto; las IAs solas, en cambio, modificaron, apartaron o sobrescribieron tests que ya existían. La IA sola escribe más tests por servicio (junit-gen limita los casos por función y descarta duplicados). Los resultados varían entre ejecuciones y dependen del proyecto.
-
-> ### ⭐ Modelo recomendado: **Sonnet 5.5 con esfuerzo alto**
-> Es la combinación más rápida y equilibrada: acertó todos los casos a la primera (cero arreglos en las tres pruebas), fue la más rápida en todos los tamaños y gasta bastante menos que Opus. Haiku es el más barato, pero falla más casos a la primera y la fase de arreglo lo hace más lento; Opus es igual de fiable pero más lento y caro.
-
----
-
 ## ✨ Qué consigues
 
 - ✅ **Tests que compilan y pasan.** Cada test se compila y se ejecuta antes de dártelo.
@@ -105,33 +140,6 @@ Con 25 servicios, la tanda completa tarda **4 min 38 s con Sonnet + junit-gen**,
 - 📦 **Tandas grandes.** «genérame los tests de 50 servicios» los hace del tirón; si se corta, «continúa la tanda».
 - 🌊 **Todos los servicios, por oleadas.** `/generartest todos` (o «genera tests para todos los servicios») recorre el proyecto entero en oleadas de 25 servicios: primero los que no tienen tests, después los de más lógica. Antes de empezar te da una estimación (servicios, oleadas, tiempo y coste) y pide **una sola** confirmación; `/generartest todos máx 50` limita y no pregunta. Cada oleada es una tanda normal (en paralelo si el cliente tiene subagentes), el progreso se guarda en `oleadas.json` (se retoma con `continuar`) y al final hay un informe global. Variables: `JUNITGEN_OLEADA` (servicios por oleada, 1..100) y `JUNITGEN_TODOS_SIN_CONFIRMAR=1` (sin confirmación; necesario con `claude -p`).
 - 🔒 **Solo lectura sobre tu proyecto.** Todo se escribe en una carpeta de salida aparte.
-
----
-
-## 🚀 Qué pasa cuando lo pides
-
-```
-/generartest genérame los tests de 5 servicios
-```
-
-1. **Escanea** el proyecto (Maven o Gradle, multimódulo) y elige los servicios.
-2. La IA **selecciona** las funciones con más lógica de negocio de cada uno.
-3. La IA **propone los casos** y junit-gen **genera** los tests.
-4. Cada servicio se **compila y ejecuta** en segundo plano mientras se sigue con el siguiente.
-5. **Fase de arreglo:** lo que falló se corrige al final (primero lo mecánico, después la IA con pistas concretas).
-6. Te devuelve el **resultado**:
-
-| Resultado | Cifra |
-|---|---|
-| Casos generados | 25 |
-| Ejecutados | 25 |
-| Pasan | 25 |
-| Descartados por duplicado | 7 |
-| Arreglados al final | 8 |
-| Posibles bugs | 0 |
-| Servicios completados | 5 de 5 |
-
-*(Ejecución real: 5 servicios de un proyecto Spring Boot multimódulo, unos 7 minutos.)*
 
 ---
 
