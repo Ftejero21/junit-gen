@@ -103,6 +103,7 @@ Con 25 servicios, la tanda completa tarda **4 min 38 s con Sonnet + junit-gen**,
 - 📄 **Informe para humanos** (`informe.md`): qué se probó, por qué, qué falló, qué se arregló y dónde copiar cada test.
 - ♻️ **Sin duplicados y sin pisar nada.** Los tests existentes solo se amplían; nunca se borran.
 - 📦 **Tandas grandes.** «genérame los tests de 50 servicios» los hace del tirón; si se corta, «continúa la tanda».
+- 🌊 **Todos los servicios, por oleadas.** `/generartest todos` (o «genera tests para todos los servicios») recorre el proyecto entero en oleadas de 25 servicios: primero los que no tienen tests, después los de más lógica. Antes de empezar te da una estimación (servicios, oleadas, tiempo y coste) y pide **una sola** confirmación; `/generartest todos máx 50` limita y no pregunta. Cada oleada es una tanda normal (en paralelo si el cliente tiene subagentes), el progreso se guarda en `oleadas.json` (se retoma con `continuar`) y al final hay un informe global. Variables: `JUNITGEN_OLEADA` (servicios por oleada, 1..100) y `JUNITGEN_TODOS_SIN_CONFIRMAR=1` (sin confirmación; necesario con `claude -p`).
 - 🔒 **Solo lectura sobre tu proyecto.** Todo se escribe en una carpeta de salida aparte.
 
 ---
@@ -141,6 +142,7 @@ ejemploTest/
 ├── informe.md            ← el informe en lenguaje llano
 ├── spec.json             ← los casos (regenerables sin IA)
 ├── tanda.json            ← progreso, para retomar
+├── oleadas.json          ← progreso del modo «todos» (solo si lo usas)
 ├── perfil-proyecto.json  ← lo que junit-gen aprende de tu proyecto
 ├── PedidoService/
 │   └── PedidoServiceImplTest.java
@@ -268,9 +270,11 @@ porcentajeFunciones: 60      # % de funciones con lógica que se prueban por ser
 fallosAsercion: revisarIa    # revisarIa | preguntar
 arreglos: alFinal            # alFinal | inmediato
 verificacion: siempre        # siempre | preguntar | nunca
+verificadores: 4             # pruebas de servicio simultáneas (1..8; por defecto automático)
+oleada: 25                   # servicios por oleada del modo «todos» (1..100; por defecto 25)
 ```
 
-**Velocidad.** El spec que escribe la IA es compacto: omite `version`, `proyecto`, `estilo`, `id`, `claseTest`, `imports`, `parametros` y las listas vacías (junit-gen los completa y deduce el `id` de `metodo` + `escenario`), con `queHaceOriginal` una vez por función y `queComprueba` en cada caso. El escaneo en memoria solo se reutiliza si la huella de las fuentes y de los archivos de build no cambió. Variables de entorno opcionales: `JUNITGEN_PREESCANEO=1` (pre-escaneo en segundo plano al arrancar el servidor MCP; algo de CPU al arrancar) y `JUNITGEN_CARGA_DIRECTA=1` (marca las herramientas principales para clientes con carga diferida).
+**Velocidad.** El spec que escribe la IA es compacto: omite `version`, `proyecto`, `estilo`, `id`, `claseTest`, `imports`, `parametros` y las listas vacías (junit-gen los completa y deduce el `id` de `metodo` + `escenario`), con `queHaceOriginal` una vez por función y `queComprueba` en cada caso. El escaneo en memoria solo se reutiliza si la huella de las fuentes y de los archivos de build no cambió. Variables de entorno opcionales: `JUNITGEN_PREESCANEO=1` (pre-escaneo en segundo plano al arrancar el servidor MCP; algo de CPU al arrancar), `JUNITGEN_CARGA_DIRECTA=1` (marca las herramientas principales para clientes con carga diferida), `JUNITGEN_VERIFICADORES` (1..8, pruebas de servicio simultáneas) y, en el modo paralelo con subagentes, `JUNITGEN_COLA=0` (desactiva la cola de trabajo entre bloques); ver el [manual](docs/MANUAL.md#modo-paralelo-subagentes).
 
 ---
 

@@ -4,6 +4,7 @@ Eres el trabajador del bloque de una tanda de tests de junit-gen. Usa SOLO herra
 - Cada respuesta tuya es UNA llamada a junit-gen, sin texto. Cada respuesta de junit-gen empieza por `accionRequerida: …`: haz esa llamada.
 - Nunca preguntes al usuario, ni terminal, ni leer o escribir archivos, ni `.java` (solo el spec JSON). En un bloque no hay `respuestaFinal`.
 - No corrijas mientras generas: los fallos se arreglan al final de tu bloque.
+- Tu bloque puede recibir más servicios de la cola común al terminar cada uno: sigue siempre `accionRequerida` / `siguienteServicio.paquete`, aunque el servicio no estuviera en tu lista inicial.
 - Al recibir «BLOQUE K TERMINADO», responde solo eso.
 
 ## Generar: una llamada a generar_tests por servicio

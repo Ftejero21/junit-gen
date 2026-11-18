@@ -14,6 +14,7 @@ import com.junitgen.generacion.Tanda;
 import com.junitgen.util.Json;
 import com.junitgen.util.LimitesRespuesta;
 import com.junitgen.util.Textos;
+import com.junitgen.verificacion.ParalelismoVerificacion;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -24,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -31,11 +33,22 @@ import java.util.Set;
  * {@link Tanda#bloques} (tanda.json) y ofrece las consultas, el ámbito de bloque de cada llamada, el paquete de trabajo con
  * la selección de funciones incluida y los textos de la guía. Todo acceso a {@code t.bloques} va bajo {@code synchronized (t)}.
  * Sin bloques en la tanda, nada de esto interviene.
+ * <p>
+ * Cola de trabajo (por defecto; {@code JUNITGEN_COLA=0} la desactiva): cada bloque (trabajador) empieza con un solo servicio y
+ * {@link #reclamar} le asigna el siguiente pendiente sin asignar cuando no le queda nada por generar; con la cola vacía roba
+ * servicios a bloques que nadie ha tomado. La cola no se persiste: es el plan menos lo asignado a bloques. Sin cola, o con un
+ * solo bloque, el reparto es fijo (LPT).
  */
 final class BloquesTanda {
 
-    /** Servicios por bloque que busca el reparto (ajustable con {@link #ENV_SERVICIOS_BLOQUE}). */
+    /** Servicios por bloque que busca el reparto sin cola de trabajo (ajustable con {@link #ENV_SERVICIOS_BLOQUE}). */
     static final int SERVICIOS_POR_BLOQUE = 4;
+    /** Servicios por trabajador que busca el reparto con cola de trabajo. */
+    static final int SERVICIOS_POR_TRABAJADOR = 3;
+    /** Bloques mínimos del tope adaptativo y bloques añadidos por cada verificador. */
+    static final int BLOQUES_BASE = 2;
+    static final int BLOQUES_POR_VERIFICADOR = 2;
+    static final String ENV_COLA = "JUNITGEN_COLA";
     /** Máximo de bloques (ajustable con {@link #ENV_MAX_BLOQUES}). */
     static final int MAX_BLOQUES = 6;
     /** Con menos servicios que este número, todo el plan es un solo bloque. */
@@ -70,15 +83,24 @@ final class BloquesTanda {
 
     /** Entero de la variable de entorno en [1, 10]; ausente, no numérico o fuera de rango → {@code defecto}. */
     private static int entorno(String nombre, int defecto) {
+        Integer v = entornoOpcional(nombre, defecto);
+        return v == null ? defecto : v;
+    }
+
+    /**
+     * Entero de la variable de entorno en [1, 10]; null si no está definida; no numérico o fuera de rango → {@code defecto}
+     * (con aviso a stderr).
+     */
+    private static Integer entornoOpcional(String nombre, int defecto) {
         String v;
         try {
             v = System.getenv(nombre);
         } catch (SecurityException e) {
             System.err.println("junit-gen: no se pudo leer " + nombre + " (" + e.getClass().getSimpleName() + ")");
-            return defecto;
+            return null;
         }
         if (v == null || v.isBlank()) {
-            return defecto;
+            return null;
         }
         try {
             int n = Integer.parseInt(v.trim());
@@ -87,19 +109,41 @@ final class BloquesTanda {
             }
         } catch (NumberFormatException e) {
             System.err.println("junit-gen: " + nombre + " no es un entero; se usa " + defecto);
-            return defecto;
+            return null;
         }
         System.err.println("junit-gen: " + nombre + " fuera de rango [" + MIN_ENTORNO + ", " + MAX_ENTORNO + "]; se usa " + defecto);
-        return defecto;
+        return null;
     }
 
-    /** Número de bloques para {@code n} servicios: 1 si hay muy pocos; si no, entre 2 y el máximo configurado. */
+    /** true salvo con {@code JUNITGEN_COLA=0|false}: cada bloque toma el siguiente servicio pendiente de la cola común. */
+    static boolean colaActiva() {
+        String v;
+        try {
+            v = System.getenv(ENV_COLA);
+        } catch (SecurityException e) {
+            return true;
+        }
+        return v == null || !("0".equals(v.strip()) || "false".equalsIgnoreCase(v.strip()));
+    }
+
+    /** Número de bloques para {@code n} servicios con los verificadores por defecto. */
     static int bloquesPara(int n) {
+        return bloquesPara(n, ParalelismoVerificacion.porDefecto());
+    }
+
+    /**
+     * Número de bloques para {@code n} servicios y {@code verificadores} verificaciones simultáneas: 1 si hay muy pocos; si no,
+     * entre 2 y el máximo ({@code JUNITGEN_MAX_BLOQUES} o, por defecto, un tope que crece con los verificadores).
+     */
+    static int bloquesPara(int n, int verificadores) {
         if (n < MIN_SERVICIOS_PARALELO) {
             return 1;
         }
-        int porBloque = entorno(ENV_SERVICIOS_BLOQUE, SERVICIOS_POR_BLOQUE);
-        int max = entorno(ENV_MAX_BLOQUES, MAX_BLOQUES);
+        int porBloque = entorno(ENV_SERVICIOS_BLOQUE, colaActiva() ? SERVICIOS_POR_TRABAJADOR : SERVICIOS_POR_BLOQUE);
+        int tope = verificadores <= 1 ? MAX_BLOQUES
+                : Math.min(MAX_ENTORNO, BLOQUES_BASE + BLOQUES_POR_VERIFICADOR * verificadores);
+        Integer definido = entornoOpcional(ENV_MAX_BLOQUES, tope);
+        int max = definido == null ? tope : definido;
         int k = Math.min(max, Math.max(2, (n + porBloque - 1) / porBloque));
         return Math.min(k, n);
     }
@@ -168,7 +212,8 @@ final class BloquesTanda {
         if (n == 0) {
             return;
         }
-        int k = bloquesPara(n);
+        int verificadores = ParalelismoVerificacion.configurado(proyecto);
+        int k = bloquesPara(n, verificadores);
         List<Integer> orden = new ArrayList<>();
         for (int i = 0; i < n; i++) {
             orden.add(i);
@@ -179,15 +224,22 @@ final class BloquesTanda {
         for (int b = 0; b < k; b++) {
             reparto.add(new ArrayList<>());
         }
-        for (int i : orden) {
-            int destino = 0;
-            for (int b = 1; b < k; b++) {
-                if (carga[b] < carga[destino]) {
-                    destino = b;
-                }
+        if (colaActiva() && k > 1) {
+            // Cola de trabajo: cada bloque empieza con uno de los k servicios más pesados; el resto queda sin asignar.
+            for (int b = 0; b < k; b++) {
+                reparto.get(b).add(orden.get(b));
             }
-            reparto.get(destino).add(i);
-            carga[destino] += servicios.get(i).casos() + PESO_BASE_SERVICIO;
+        } else {
+            for (int i : orden) {
+                int destino = 0;
+                for (int b = 1; b < k; b++) {
+                    if (carga[b] < carga[destino]) {
+                        destino = b;
+                    }
+                }
+                reparto.get(destino).add(i);
+                carga[destino] += servicios.get(i).casos() + PESO_BASE_SERVICIO;
+            }
         }
         List<Tanda.BloqueTanda> bloques = new ArrayList<>();
         for (int b = 0; b < k; b++) {
@@ -203,6 +255,151 @@ final class BloquesTanda {
         }
         synchronized (t) {
             t.bloques = bloques;
+            t.verificadores = verificadores;
+        }
+    }
+
+    // ------------------------------------------------------------- cola de trabajo
+
+    /** FQN → casos que faltan por generar (solo los que faltan algo), en el orden del plan. Nunca con el monitor de la tanda. */
+    private static Map<String, Integer> pendientesDelPlan(SesionMcp sesion, Path proyecto) {
+        Map<String, Integer> r = new LinkedHashMap<>();
+        for (SesionMcp.EstadoMetodo m : sesion.estadoPlanGlobal(proyecto)) {
+            if (m.faltan() > 0) {
+                r.merge(m.fqn(), m.faltan(), Integer::sum);
+            }
+        }
+        return r;
+    }
+
+    private static Set<String> asignados(Tanda t) {
+        Set<String> r = new LinkedHashSet<>();
+        if (t.bloques != null) {
+            for (Tanda.BloqueTanda b : t.bloques) {
+                if (b != null && b.servicios != null) {
+                    r.addAll(b.servicios);
+                }
+            }
+        }
+        return r;
+    }
+
+    /**
+     * Cola de trabajo: si el bloque no tiene nada por generar, le asigna el siguiente servicio pendiente sin asignar a ningún
+     * bloque (el de más peso: casos que faltan + {@link #PESO_BASE_SERVICIO}; empate, orden del plan). Con la cola vacía,
+     * roba el de más peso de otro bloque que nadie ha tomado; si el donante queda sin servicios, pasa a terminado. Devuelve
+     * el FQN asignado o null (bloque inexistente o terminado, ya con trabajo, o nada que repartir). Sin la cola común
+     * ({@code JUNITGEN_COLA=0}) no hace nada.
+     */
+    static String reclamar(SesionMcp sesion, Path proyecto, int bloque) {
+        if (sesion == null || proyecto == null || !colaActiva()) {
+            return null;
+        }
+        Tanda t = sesion.tanda(proyecto);
+        if (!activo(t)) {
+            return null;
+        }
+        Map<String, Integer> pendientes = pendientesDelPlan(sesion, proyecto);
+        if (pendientes.isEmpty()) {
+            return null;
+        }
+        synchronized (t) {
+            Tanda.BloqueTanda b = buscar(t, bloque);
+            if (b == null || Tanda.BLOQUE_TERMINADO.equals(b.estado)) {
+                return null;
+            }
+            if (b.servicios == null) {
+                b.servicios = new ArrayList<>();
+            }
+            for (String fqn : b.servicios) {
+                if (pendientes.containsKey(fqn)) {
+                    return null;
+                }
+            }
+            Set<String> asignados = asignados(t);
+            String elegido = null;
+            int mejor = -1;
+            for (Map.Entry<String, Integer> e : pendientes.entrySet()) {
+                if (!asignados.contains(e.getKey()) && e.getValue() + PESO_BASE_SERVICIO > mejor) {
+                    elegido = e.getKey();
+                    mejor = e.getValue() + PESO_BASE_SERVICIO;
+                }
+            }
+            if (elegido == null) {
+                Tanda.BloqueTanda donante = null;
+                for (Tanda.BloqueTanda o : t.bloques) {
+                    if (o == null || o.id == bloque || o.tomado != null || !Tanda.BLOQUE_PENDIENTE.equals(o.estado) || o.servicios == null) {
+                        continue;
+                    }
+                    for (String fqn : o.servicios) {
+                        Integer faltan = pendientes.get(fqn);
+                        if (faltan != null && faltan + PESO_BASE_SERVICIO > mejor) {
+                            elegido = fqn;
+                            mejor = faltan + PESO_BASE_SERVICIO;
+                            donante = o;
+                        }
+                    }
+                }
+                if (elegido == null) {
+                    return null;
+                }
+                donante.servicios.remove(elegido);
+                if (donante.servicios.isEmpty()) {
+                    donante.estado = Tanda.BLOQUE_TERMINADO;
+                    if (donante.terminado == null) {
+                        donante.terminado = Instant.now().toString();
+                    }
+                }
+            }
+            b.servicios.add(elegido);
+            return elegido;
+        }
+    }
+
+    /** Servicios con casos por generar que no están asignados a ningún bloque (la cola común); 0 sin tanda en bloques. */
+    static int enCola(SesionMcp sesion, Path proyecto) {
+        if (sesion == null || proyecto == null) {
+            return 0;
+        }
+        Tanda t = sesion.tanda(proyecto);
+        if (!activo(t)) {
+            return 0;
+        }
+        Map<String, Integer> pendientes = pendientesDelPlan(sesion, proyecto);
+        if (pendientes.isEmpty()) {
+            return 0;
+        }
+        synchronized (t) {
+            Set<String> asignados = asignados(t);
+            int n = 0;
+            for (String fqn : pendientes.keySet()) {
+                if (!asignados.contains(fqn)) {
+                    n++;
+                }
+            }
+            return n;
+        }
+    }
+
+    /** Suma {@code ms} a la espera del bloque: de sus pruebas en segundo plano ({@code pruebas}) o del turno del cerrojo de sesión. */
+    static void sumarEspera(SesionMcp sesion, Path proyecto, int bloque, long ms, boolean pruebas) {
+        if (sesion == null || proyecto == null || ms <= 0) {
+            return;
+        }
+        Tanda t = sesion.tanda(proyecto);
+        if (t == null) {
+            return;
+        }
+        synchronized (t) {
+            Tanda.BloqueTanda b = buscar(t, bloque);
+            if (b == null) {
+                return;
+            }
+            if (pruebas) {
+                b.esperaPruebasMs = (b.esperaPruebasMs == null ? 0 : b.esperaPruebasMs) + ms;
+            } else {
+                b.esperaTurnoMs = (b.esperaTurnoMs == null ? 0 : b.esperaTurnoMs) + ms;
+            }
         }
     }
 
@@ -240,6 +437,8 @@ final class BloquesTanda {
         c.estado = b.estado;
         c.tomado = b.tomado;
         c.terminado = b.terminado;
+        c.esperaPruebasMs = b.esperaPruebasMs;
+        c.esperaTurnoMs = b.esperaTurnoMs;
         return c;
     }
 
@@ -338,10 +537,16 @@ final class BloquesTanda {
                 pendientes.add(m.fqn());
             }
         }
+        // Con servicios sin asignar en la cola común, cualquier bloque no terminado puede tomar trabajo.
+        boolean hayCola = enCola(sesion, proyecto) > 0;
         synchronized (t) {
             if (t.bloques != null) {
                 for (Tanda.BloqueTanda b : t.bloques) {
                     if (b == null || Tanda.BLOQUE_TERMINADO.equals(b.estado) || b.servicios == null) {
+                        continue;
+                    }
+                    if (hayCola) {
+                        r.add(b.id);
                         continue;
                     }
                     for (String fqn : b.servicios) {
@@ -565,6 +770,19 @@ final class BloquesTanda {
         if (!activo(t)) {
             return "";
         }
+        return textoOleada(t) + siguientePasoBloques(sesion, proyecto, salida, ids, t);
+    }
+
+    /** Frase de oleada del modo «todos» para el siguiente paso de una tanda con oleada; vacía en una tanda normal. */
+    static String textoOleada(Tanda t) {
+        if (t == null || t.oleada == null) {
+            return "";
+        }
+        return "Oleada " + t.oleada + (t.oleadas == null ? "" : " de " + t.oleadas) + " del modo «todos»: usa subagentes NUEVOS "
+                + "(no reutilices los de oleadas anteriores). Al cerrar, junit-gen te indicará la siguiente oleada. ";
+    }
+
+    private static String siguientePasoBloques(SesionMcp sesion, Path proyecto, Path salida, Collection<Integer> ids, Tanda t) {
         List<Tanda.BloqueTanda> elegidos = new ArrayList<>();
         int total;
         synchronized (t) {
@@ -602,6 +820,12 @@ final class BloquesTanda {
             sb.append("| ").append(b.id).append(" | ").append(b.servicios.size()).append(b.servicios.size() == 1 ? " servicio: " : " servicios: ")
                     .append(String.join(", ", nombres))
                     .append(b.servicios.size() > nombres.size() ? " +" + (b.servicios.size() - nombres.size()) : "").append(" |\n");
+        }
+        int enCola = enCola(sesion, proyecto);
+        if (enCola > 0) {
+            sb.append("\nCola común: ").append(enCola).append(enCola == 1 ? " servicio más sin asignar" : " servicios más sin asignar")
+                    .append("; cada bloque toma el siguiente al terminar el suyo (lo reparte junit-gen: no lances más subagentes que "
+                            + "bloques).\n");
         }
         sb.append("\npromptTrabajador (cambia <K> por el número del bloque):\n\n").append(promptTrabajador(proyecto, salida)).append('\n');
         return sb.toString();

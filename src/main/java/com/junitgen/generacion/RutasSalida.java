@@ -39,6 +39,8 @@ public final class RutasSalida {
     public static final String ESCANEO_JSON = "escaneo.json";
     /** Estado persistente de la tanda (plan, índice y estado por servicio) para retomarla con `continuar`. */
     public static final String TANDA = "tanda.json";
+    /** Campaña del modo «todos los servicios»: oleadas, servicios y progreso, para retomarla con `continuar`. */
+    public static final String OLEADAS = "oleadas.json";
     /** Perfil del proyecto (montaje, fábricas de datos, stubs típicos, huellas y recetas aprendidas). */
     public static final String PERFIL = "perfil-proyecto.json";
     /** Separador entre la carpeta del servicio y su paquete cuando hay colisión. */

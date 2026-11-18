@@ -14,8 +14,10 @@ import com.junitgen.escaneo.ModuloEscaneado;
 import com.junitgen.escaneo.PlanGeneracion;
 import com.junitgen.escaneo.ProyectoEscaneado;
 import com.junitgen.escaneo.SeleccionFunciones;
+import com.junitgen.generacion.AlmacenOleadas;
 import com.junitgen.generacion.AlmacenSpec;
 import com.junitgen.generacion.AlmacenTanda;
+import com.junitgen.generacion.Oleadas;
 import com.junitgen.generacion.Tanda;
 import com.junitgen.perfil.AlmacenPerfil;
 import com.junitgen.perfil.ConstructorPerfil;
@@ -82,7 +84,8 @@ public class HerramientaEscanear implements Herramienta {
                 + "workspace que ya conoces, nunca un módulo. Un número N del usuario es siempre numServicios. Sin 'carpetaSalida' "
                 + "usa la ruta por defecto o la pregunta una vez. 'continuar'=true si el usuario escribe `continuar` o perdiste el "
                 + "hilo de la tanda. 'paralelo'=true si tienes subagentes (Agent en Claude Code; task o runSubagent en Copilot): reparte el plan "
-                + "en bloques y devuelve el promptTrabajador. Cada caso nuevo: queHaceOriginal una vez por función y queComprueba "
+                + "en bloques y devuelve el promptTrabajador. Frase «todos» (todos los servicios, `todos máx N`): va por oleadas; sigue "
+                + "accionRequerida. Cada caso nuevo: queHaceOriginal una vez por función y queComprueba "
                 + "en cada caso. Sigue accionRequerida. Secciones largas: 'seccion'+'pagina', solo si las piden.";
     }
 
@@ -112,6 +115,10 @@ public class HerramientaEscanear implements Herramienta {
         Herramienta.propiedad(s, "refrescar", "boolean", "Ignora la caché y vuelve a escanear.", false);
         Herramienta.propiedad(s, "continuar", "boolean", "Retoma la tanda guardada: el usuario escribió `continuar` o perdiste el hilo.", false);
         Herramienta.propiedad(s, "paralelo", "boolean", "Si tienes subagentes (Agent, task o runSubagent): reparte el plan en bloques.", false);
+        Herramienta.propiedad(s, "todosServicios", "boolean", "Solo si el usuario pidió todos los servicios (`todos`): modo por oleadas.", false);
+        Herramienta.propiedad(s, "maxServicios", "integer", "Con todosServicios: máximo de servicios (`todos máx N`); sin confirmación.", false);
+        ((ObjectNode) s.get("properties").get("maxServicios")).put("minimum", PlanGeneracion.MIN_SERVICIOS);
+        Herramienta.propiedad(s, "confirmarTodos", "boolean", "Con todosServicios: el usuario ya confirmó la estimación.", false);
         return s;
     }
 
@@ -196,7 +203,7 @@ public class HerramientaEscanear implements Herramienta {
             }
             if (!hayEstructurados && lx.intencion() == InterpretePeticion.Intencion.CONTINUAR && args instanceof ObjectNode o) {
                 ObjectNode copia = o.deepCopy();
-                copia.remove(List.of(PETICION, "servicios", "numServicios", "funciones", TODAS));
+                copia.remove(List.of(PETICION, "servicios", "numServicios", "funciones", TODAS, "todosServicios", "maxServicios", "confirmarTodos"));
                 return continuar(copia, sesion);
             }
         }
@@ -260,6 +267,21 @@ public class HerramientaEscanear implements Herramienta {
                 funciones.addAll(ip.funciones());
             }
         }
+        boolean todos = Herramienta.bool(args, "todosServicios") || (lx != null && lx.todosServicios());
+        if (todos) {
+            if (n != null || !servicios.isEmpty() || !funciones.isEmpty()) {
+                sesion.anotar("«todos» se ignora porque la petición ya indica servicios, funciones o un número de servicios.");
+            } else {
+                Integer max = maxServicios(args);
+                if (max == null && lx != null) {
+                    max = lx.maxTodos();
+                    if (max != null && max < PlanGeneracion.MIN_SERVICIOS) {
+                        throw new IllegalArgumentException(errorMaxServicios());
+                    }
+                }
+                return OleadasTodos.iniciar(args, sesion, p, proyecto, salida, op, todas, max, op.modulo, lx, ip);
+            }
+        }
         String accion = null;
         Resolucion res = null;
         if (!servicios.isEmpty()) {
@@ -276,30 +298,7 @@ public class HerramientaEscanear implements Herramienta {
             Set<String> modulos = !plan.modulosRel().isEmpty() ? plan.modulosRel() : res != null ? res.modulosTrabajo : Set.of();
             sesion.recordarModulos(proyecto, modulos);
             if (plan.total() > 0) {
-                List<SesionMcp.MetodoPlan> metodos = new ArrayList<>();
-                for (PlanGeneracion.Objetivo o : plan.objetivos()) {
-                    metodos.add(new SesionMcp.MetodoPlan(o.servicio.fqn, o.metodo.nombre, o.casos, o.conTests));
-                }
-                sesion.fijarPlan(proyecto, metodos);
-                iniciarTanda(sesion, proyecto, salida, plan, n, todas);
-                op.modulosRel.addAll(plan.modulosRel());
-                op.clasesFqn.addAll(plan.fqns());
-                op.siguientePaso = siguientePasoPlan(plan, sesion, proyecto, salida);
-                boolean paralelo = args != null && args.has("paralelo")
-                        ? Herramienta.bool(args, "paralelo")
-                        : BloquesTanda.clienteConSubagentes(sesion);
-                if (paralelo) {
-                    String motivo = BloquesTanda.motivoNoPermitido(sesion, proyecto, salida);
-                    if (motivo == null) {
-                        BloquesTanda.repartir(sesion, proyecto, plan);
-                        if (salida != null && Files.isDirectory(salida)) {
-                            sesion.guardarTanda(proyecto, salida, Boolean.FALSE);
-                        }
-                        op.siguientePaso = BloquesTanda.siguientePaso(sesion, proyecto, salida, null);
-                    } else {
-                        sesion.anotar(motivo);
-                    }
-                }
+                activarPlan(sesion, proyecto, salida, plan, n, todas, args, op, null, null);
             } else {
                 sesion.quitarPlan(proyecto);
                 sesion.iniciarTanda(proyecto, null);
@@ -348,6 +347,61 @@ public class HerramientaEscanear implements Herramienta {
         return new Resultado(resumen(p, salida, op, seccionPedidos, plan, proyecto, sesion), false);
     }
 
+    /**
+     * Fija el plan (y su tanda, con la oleada del modo «todos» si se indica) y, con subagentes, reparte los bloques. Rellena
+     * módulos, clases y siguiente paso de {@code op} y devuelve el siguiente paso.
+     */
+    static String activarPlan(SesionMcp sesion, Path proyecto, Path salida, PlanGeneracion plan, Integer n, boolean todas,
+                              JsonNode args, InformeEscaneo.Opciones op, Integer oleada, Integer oleadas) {
+        List<SesionMcp.MetodoPlan> metodos = new ArrayList<>();
+        for (PlanGeneracion.Objetivo o : plan.objetivos()) {
+            metodos.add(new SesionMcp.MetodoPlan(o.servicio.fqn, o.metodo.nombre, o.casos, o.conTests));
+        }
+        sesion.fijarPlan(proyecto, metodos);
+        iniciarTanda(sesion, proyecto, salida, plan, n, todas, oleada, oleadas);
+        op.modulosRel.addAll(plan.modulosRel());
+        op.clasesFqn.addAll(plan.fqns());
+        op.siguientePaso = siguientePasoPlan(plan, sesion, proyecto, salida);
+        boolean paralelo = args != null && args.has("paralelo")
+                ? Herramienta.bool(args, "paralelo")
+                : BloquesTanda.clienteConSubagentes(sesion);
+        if (paralelo) {
+            String motivo = BloquesTanda.motivoNoPermitido(sesion, proyecto, salida);
+            if (motivo == null) {
+                BloquesTanda.repartir(sesion, proyecto, plan);
+                if (salida != null && Files.isDirectory(salida)) {
+                    sesion.guardarTanda(proyecto, salida, Boolean.FALSE);
+                }
+                op.siguientePaso = BloquesTanda.siguientePaso(sesion, proyecto, salida, null);
+            } else {
+                sesion.anotar(motivo);
+            }
+        }
+        return op.siguientePaso;
+    }
+
+    /** 'maxServicios' validado (entero >= 1) o null si no se pasó. */
+    static Integer maxServicios(JsonNode args) {
+        JsonNode v = args == null ? null : args.get("maxServicios");
+        if (v == null || v.isNull() || (v.isTextual() && v.asText().isBlank())) {
+            return null;
+        }
+        int c;
+        try {
+            c = v.isIntegralNumber() ? v.asInt() : Integer.parseInt(v.asText().trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(errorMaxServicios());
+        }
+        if (!v.isTextual() && !v.isIntegralNumber() || c < PlanGeneracion.MIN_SERVICIOS) {
+            throw new IllegalArgumentException(errorMaxServicios());
+        }
+        return c;
+    }
+
+    static String errorMaxServicios() {
+        return "maxServicios debe ser un entero mayor o igual que " + PlanGeneracion.MIN_SERVICIOS + ".";
+    }
+
     /** El argumento está presente y no vacío (ni null, ni texto en blanco, ni lista vacía). */
     private static boolean presente(JsonNode args, String campo) {
         JsonNode v = args == null ? null : args.get(campo);
@@ -378,6 +432,9 @@ public class HerramientaEscanear implements Herramienta {
         }
         if (lx.todas()) {
             partes.add("todas = sí");
+        }
+        if (lx.todosServicios()) {
+            partes.add("todos los servicios = sí" + (lx.maxTodos() == null ? "" : " (máx " + lx.maxTodos() + ")"));
         }
         if (ip != null && !ip.funciones().isEmpty()) {
             partes.add("funciones = [" + String.join(", ", ip.funciones()) + "]");
@@ -465,7 +522,7 @@ public class HerramientaEscanear implements Herramienta {
      * Crea o actualiza perfil-proyecto.json si la carpeta de salida ya existe y anota el resultado (nada si no
      * cambió). Nunca rompe el escaneo.
      */
-    private static void anotarPerfil(SesionMcp sesion, ProyectoEscaneado p, Path salida) {
+    static void anotarPerfil(SesionMcp sesion, ProyectoEscaneado p, Path salida) {
         try {
             ConstructorPerfil.Resultado r = sesion.fachada().sincronizarPerfil(p, salida);
             String nota = notaPerfil(r, salida);
@@ -522,10 +579,17 @@ public class HerramientaEscanear implements Herramienta {
      * una tanda sin cerrar del mismo proyecto, se anota que se sustituye.
      */
     static void iniciarTanda(SesionMcp sesion, Path proyecto, Path salida, PlanGeneracion plan, Integer numServicios, boolean todas) {
+        iniciarTanda(sesion, proyecto, salida, plan, numServicios, todas, null, null);
+    }
+
+    /** Como {@link #iniciarTanda(SesionMcp, Path, Path, PlanGeneracion, Integer, boolean)} con la oleada del modo «todos» (null = tanda normal). */
+    static void iniciarTanda(SesionMcp sesion, Path proyecto, Path salida, PlanGeneracion plan, Integer numServicios, boolean todas,
+                             Integer oleada, Integer oleadas) {
         if (salida != null) {
             try {
                 Tanda previa = AlmacenTanda.leer(salida);
-                if (previa != null && !previa.cerrada && mismoProyecto(previa, proyecto)) {
+                if (previa != null && !previa.cerrada && mismoProyecto(previa, proyecto)
+                        && !(oleada != null && previa.oleada != null)) {
                     sesion.anotar("Había una tanda sin terminar (" + previa.completos() + " de " + previa.servicios.size()
                             + " servicios); se sustituye. Los servicios ya generados no se repiten.");
                 }
@@ -540,6 +604,8 @@ public class HerramientaEscanear implements Herramienta {
         t.orden = plan.orden() == null ? null : plan.orden().name().toLowerCase(Locale.ROOT);
         t.todas = todas ? Boolean.TRUE : null;
         t.numServicios = numServicios;
+        t.oleada = oleada;
+        t.oleadas = oleadas;
         for (PlanGeneracion.ServicioPlan s : plan.servicios()) {
             Tanda.ServicioTanda st = new Tanda.ServicioTanda();
             st.clase = s.clase.fqn;
@@ -571,7 +637,7 @@ public class HerramientaEscanear implements Herramienta {
      * tanda.json y spec.json y vuelve a encolar lo no verificado (solo con verificación «siempre»).
      */
     private Resultado continuar(JsonNode args, SesionMcp sesion) {
-        for (String k : List.of("numServicios", "servicios", "funciones", TODAS)) {
+        for (String k : List.of("numServicios", "servicios", "funciones", TODAS, "todosServicios", "maxServicios", "confirmarTodos")) {
             JsonNode v = args.get(k);
             boolean vacio = v == null || v.isNull() || (v.isBoolean() && !v.asBoolean()) || (v.isArray() && v.isEmpty())
                     || (v.isTextual() && v.asText().isBlank());
@@ -580,12 +646,81 @@ public class HerramientaEscanear implements Herramienta {
                         + "'todas': retoma la tanda guardada tal cual. Para una tanda nueva usa /generartest N (sin continuar).");
             }
         }
-        Path proyecto = RutaSegura.validarProyecto(RutasSesion.proyecto(args, sesion, "ruta", true));
+        Path proyecto = RutaSegura.validarProyecto(proyectoParaContinuar(args, sesion));
         Path salida = RutasSesion.salida(proyecto, Herramienta.ruta(args, "carpetaSalida"), sesion, false,
                 Herramienta.bool(args, "guardarRutaPorDefecto"));
         if (salida == null) {
             return new Resultado(RutasSesion.instruccionPreguntar(proyecto, sesion) + "\n\nDespués vuelve a llamar a "
-                    + "escanear_proyecto {continuar: true, carpetaSalida: <la elegida>}.\n", false);
+                    + "escanear_proyecto {continuar: true, ruta: " + proyecto + ", carpetaSalida: <la elegida>}.\n", false);
+        }
+        return continuarEn(args, sesion, proyecto, salida);
+    }
+
+    /**
+     * Proyecto de `continuar`: argumento `ruta` → proyecto de la campaña o tanda guardadas en `carpetaSalida` → último
+     * escaneo si la sesión tiene estado propio → raíces del IDE / directorio de trabajo. Así una llamada sin `ruta` no cae
+     * en una raíz del IDE que no es el proyecto de la campaña (Claude Code: la raíz es el cwd).
+     */
+    private static Path proyectoParaContinuar(JsonNode args, SesionMcp sesion) {
+        Path arg = Herramienta.ruta(args, "ruta");
+        if (arg != null) {
+            return arg;
+        }
+        Path carpeta = Herramienta.ruta(args, "carpetaSalida");
+        if (carpeta != null) {
+            Path delDisco = proyectoDeLaSalida(carpeta);
+            if (delDisco != null) {
+                return delDisco;
+            }
+        }
+        Path ultima = sesion.fachada().ultimaRuta();
+        if (ultima != null && (sesion.oleadas(ultima) != null || sesion.tanda(ultima) != null || sesion.progresoPlan(ultima) != null)) {
+            return ultima;
+        }
+        return RutasSesion.proyecto(args, sesion, "ruta", true);
+    }
+
+    /** Proyecto de oleadas.json (sin cerrar) o, si no, de tanda.json de la salida, si es una carpeta válida; si no, null. */
+    private static Path proyectoDeLaSalida(Path salida) {
+        String ruta = null;
+        try {
+            Oleadas c = AlmacenOleadas.leer(salida);
+            if (c != null && !c.cerrada) {
+                ruta = c.proyecto;
+            }
+        } catch (RuntimeException e) {
+            System.err.println("junit-gen: se ignora el oleadas.json de la salida al deducir el proyecto: " + e.getClass().getSimpleName());
+        }
+        if (ruta == null || ruta.isBlank()) {
+            try {
+                Tanda t = AlmacenTanda.leer(salida);
+                ruta = t == null ? null : t.proyecto;
+            } catch (RuntimeException e) {
+                System.err.println("junit-gen: se ignora el tanda.json de la salida al deducir el proyecto: " + e.getClass().getSimpleName());
+            }
+        }
+        if (ruta == null || ruta.isBlank()) {
+            return null;
+        }
+        try {
+            return RutaSegura.validarProyecto(Path.of(ruta));
+        } catch (RuntimeException e) {
+            System.err.println("junit-gen: el proyecto guardado en la salida no es válido y se ignora: " + e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    /**
+     * Cuerpo de `continuar` con proyecto y salida ya resueltos: avanza la campaña «todos» si toca, informa de la tanda en
+     * curso de la sesión o restaura la tanda guardada. No revalida las claves de petición (lo usa también «todos»).
+     */
+    static Resultado continuarEn(JsonNode args, SesionMcp sesion, Path proyecto, Path salida) {
+        Oleadas campana = OleadasTodos.cargar(sesion, proyecto, salida);
+        if (campana != null) {
+            Tanda actual = OleadasTodos.tandaActual(sesion, proyecto, salida);
+            if (OleadasTodos.debeAvanzar(campana, actual, proyecto)) {
+                return OleadasTodos.continuarCampana(args, sesion, proyecto, salida, campana, actual);
+            }
         }
         Tanda enMemoria = sesion.tanda(proyecto);
         if (enMemoria != null && sesion.progresoPlan(proyecto) != null) {
@@ -711,6 +846,7 @@ public class HerramientaEscanear implements Herramienta {
         StringBuilder sb = new StringBuilder(titulo).append("\n\n");
         sb.append("- Carpeta de salida: ").append(salida).append('\n');
         sb.append("- Servicios: ").append(n).append(" (completados: ").append(completos).append(")\n");
+        sb.append(OleadasTodos.lineaProgreso(sesion, proyecto));
         if (siguiente != null && t != null) {
             int k = 0;
             for (int i = 0; i < t.servicios.size(); i++) {
@@ -730,6 +866,10 @@ public class HerramientaEscanear implements Herramienta {
         if (enBloques) {
             sb.append("- Bloques: ").append(BloquesTanda.ids(t).size()).append(" (sin terminar: ")
                     .append(bloquesSinTerminar.isEmpty() ? "ninguno" : BloquesTanda.listaIds(bloquesSinTerminar)).append(")\n");
+            int enCola = BloquesTanda.enCola(sesion, proyecto);
+            if (enCola > 0) {
+                sb.append("- En cola (sin asignar): ").append(enCola).append('\n');
+            }
         }
         if (reprobados > 0) {
             sb.append("- Se vuelven a probar en segundo plano: ").append(reprobados).append(reprobados == 1 ? " servicio\n" : " servicios\n");

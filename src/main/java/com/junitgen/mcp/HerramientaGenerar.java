@@ -673,6 +673,11 @@ public class HerramientaGenerar implements Herramienta {
             cerrados = sesion.registrarIntento(proyecto, serviciosEnPlan(sesion, proyecto, val), antes, false);
         }
         sesion.reiniciarRechazosPuertaPlan();
+        Integer bloque = sesion.bloqueLlamada();
+        if (bloque != null) {
+            // Cola de trabajo: antes de calcular el progreso del bloque, para que ya vea el servicio recién asignado.
+            BloquesTanda.reclamar(sesion, proyecto, bloque);
+        }
         SesionMcp.ProgresoPlan p = sesion.progresoPlan(proyecto);
         Map<String, Object> plan = new LinkedHashMap<>();
         plan.put("total", p.total());

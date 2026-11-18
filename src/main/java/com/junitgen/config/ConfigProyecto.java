@@ -31,6 +31,13 @@ public class ConfigProyecto {
     public ModoFallosAsercion fallosAsercion;
     /** Cuándo se arreglan los casos que fallan en una tanda; null = sin configurar (se usa {@link ModoArreglos#AL_FINAL}). */
     public ModoArreglos arreglos;
+    /** Límites de la clave {@code oleada}. */
+    public static final int MIN_OLEADA = 1;
+    public static final int MAX_OLEADA = 100;
+    /** Verificaciones de servicio simultáneas (1..8); null = automático. */
+    public Integer verificadores;
+    /** Servicios por oleada del modo «todos» ({@link #MIN_OLEADA}..{@link #MAX_OLEADA}); null = automático (25). */
+    public Integer oleada;
     public List<String> origenes = new ArrayList<>();
     public List<String> avisos = new ArrayList<>();
 
@@ -159,6 +166,8 @@ public class ConfigProyecto {
         r.orden = otra.orden != null ? otra.orden : orden;
         r.fallosAsercion = otra.fallosAsercion != null ? otra.fallosAsercion : fallosAsercion;
         r.arreglos = otra.arreglos != null ? otra.arreglos : arreglos;
+        r.verificadores = otra.verificadores != null ? otra.verificadores : verificadores;
+        r.oleada = otra.oleada != null ? otra.oleada : oleada;
         r.origenes = new ArrayList<>(origenes);
         r.origenes.addAll(otra.origenes);
         r.avisos = new ArrayList<>(avisos);

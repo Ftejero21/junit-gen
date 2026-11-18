@@ -67,7 +67,20 @@ final class MedicionTanda {
                 return new Cubo(a.servicio, true);
             }
         }
-        return new Cubo(TANDA, false);
+        Integer bloque = sesion.bloqueLlamada();
+        // Llamadas de un bloque sin servicio ni arreglo pendiente (esperas de cierre…): a su propia fila, no a «(tanda)».
+        return bloque == null ? new Cubo(TANDA, false) : new Cubo(claveBloque(bloque), false);
+    }
+
+    /** Clave de medición de las llamadas de un bloque que no son de ningún servicio. */
+    static String claveBloque(int bloque) {
+        return PREFIJO_BLOQUE + bloque + ")";
+    }
+
+    private static final String PREFIJO_BLOQUE = "(bloque ";
+
+    private static boolean esClaveBloque(String clave) {
+        return clave != null && clave.startsWith(PREFIJO_BLOQUE);
     }
 
     /**
@@ -132,7 +145,7 @@ final class MedicionTanda {
             if (m == null) {
                 continue;
             }
-            String nombre = TANDA.equals(e.getKey()) ? TANDA : Textos.nombreSimple(e.getKey());
+            String nombre = TANDA.equals(e.getKey()) || esClaveBloque(e.getKey()) ? e.getKey() : Textos.nombreSimple(e.getKey());
             fila(sb, nombre, m);
             total.ms += m.ms;
             total.llamadas += m.llamadas;
@@ -144,7 +157,7 @@ final class MedicionTanda {
             if (m.enArreglo != null) {
                 m.enArreglo.forEach((k, v) -> total.enArreglo.merge(k, v, Integer::sum));
             }
-            if (!TANDA.equals(e.getKey())) {
+            if (!TANDA.equals(e.getKey()) && !esClaveBloque(e.getKey())) {
                 servicios++;
                 msServicios += m.ms;
                 llamadasServicios += m.llamadas;
@@ -186,8 +199,15 @@ final class MedicionTanda {
         }
         String real = primera == null || ultima == null ? "sin datos" : tiempo(Math.max(0, ultima.toEpochMilli() - primera.toEpochMilli()));
         StringBuilder sb = new StringBuilder("\nTanda en paralelo: ").append(t.bloques.size()).append(" bloques; tiempo real: ")
-                .append(real).append(" (de la primera a la última llamada); la fila Total suma el trabajo de todos los bloques\n\n");
-        sb.append("| Bloque | Servicios | Tiempo | Llamadas |\n|---|---|---|---|\n");
+                .append(real).append(" (de la primera a la última llamada); la fila Total suma el trabajo de todos los bloques");
+        if (t.verificadores != null) {
+            sb.append("; ").append(t.verificadores).append(t.verificadores == 1 ? " verificador" : " verificadores")
+                    .append(" (máx. simultáneas: ").append(t.maxVerificacionesSimultaneas == null ? 0 : t.maxVerificacionesSimultaneas)
+                    .append(')');
+        }
+        sb.append("; cola de trabajo: ").append(BloquesTanda.colaActiva() ? "sí" : "no").append("\n\n");
+        sb.append("| Bloque | Servicios | Tiempo | Llamadas | Tomado→terminado | Espera de pruebas | Espera de turno |\n"
+                + "|---|---|---|---|---|---|---|\n");
         for (Tanda.BloqueTanda b : t.bloques) {
             if (b == null) {
                 continue;
@@ -203,10 +223,28 @@ final class MedicionTanda {
                     llamadas += m.llamadas;
                 }
             }
-            sb.append("| ").append(b.id).append(" | ").append(EscritorInforme.celda(String.join(", ", nombres))).append(" | ")
-                    .append(tiempo(tiempo)).append(" | ").append(llamadas).append(" |\n");
+            Tanda.Medicion propia = ms.get(claveBloque(b.id));
+            if (propia != null) {
+                tiempo += propia.ms;
+                llamadas += propia.llamadas;
+            }
+            String servicios = nombres.isEmpty() ? "(sin servicios: los tomó otro bloque)" : String.join(", ", nombres);
+            sb.append("| ").append(b.id).append(" | ").append(EscritorInforme.celda(servicios)).append(" | ")
+                    .append(tiempo(tiempo)).append(" | ").append(llamadas).append(" | ").append(tomadoTerminado(b)).append(" | ")
+                    .append(tiempo(b.esperaPruebasMs == null ? 0 : b.esperaPruebasMs)).append(" | ")
+                    .append(tiempo(b.esperaTurnoMs == null ? 0 : b.esperaTurnoMs)).append(" |\n");
         }
         return sb.toString();
+    }
+
+    /** Tiempo entre que un trabajador tomó el bloque y quedó terminado; «-» si falta alguno de los dos instantes. */
+    private static String tomadoTerminado(Tanda.BloqueTanda b) {
+        Instant i = instante(b.tomado);
+        Instant f = instante(b.terminado);
+        if (i == null || f == null) {
+            return "-";
+        }
+        return tiempo(Math.max(0, f.toEpochMilli() - i.toEpochMilli()));
     }
 
     private static Instant instante(String iso) {
@@ -353,11 +391,17 @@ final class MedicionTanda {
             return;
         }
         String cuerpo;
+        // Antes de tomar el monitor de la tanda: consulta el monitor de las verificaciones.
+        int maxSimultaneas = sesion.verificaciones().maxSimultaneas(salida);
         synchronized (t) {
             if (t.mediciones == null || t.mediciones.isEmpty() || t.medicionInformada) {
                 return;
             }
             t.medicionInformada = true;
+            if (maxSimultaneas > 0) {
+                t.maxVerificacionesSimultaneas = Math.max(t.maxVerificacionesSimultaneas == null ? 0 : t.maxVerificacionesSimultaneas,
+                        maxSimultaneas);
+            }
             cuerpo = cuerpoInforme(t);
         }
         try {

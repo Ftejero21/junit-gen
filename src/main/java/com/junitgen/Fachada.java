@@ -833,12 +833,17 @@ public class Fachada {
 
     /** Añade a informe.md la sección «Medición de la tanda» (solo escribe en la salida). Devuelve la ruta del informe. */
     public String anotarMedicion(Path proyecto, Path salida, String cuerpoMd) {
+        return anotarSeccion(proyecto, salida, TITULO_MEDICION, cuerpoMd);
+    }
+
+    /** Añade a informe.md una sección con el título y el cuerpo dados (solo escribe en la salida). Devuelve la ruta del informe. */
+    public String anotarSeccion(Path proyecto, Path salida, String titulo, String cuerpoMd) {
         EscritorSeguro esc = new EscritorSeguro(proyecto, salida);
         return BloqueosSalida.conEscritura(esc.salida(), () -> {
             Path rutaInforme = esc.salida().resolve(RutasSalida.INFORME);
             Map<Path, String> plan = new LinkedHashMap<>();
             plan.put(rutaInforme, EscritorInforme.anadir(esc.salida(), esc.aviso(),
-                    EscritorInforme.seccionTexto(TITULO_MEDICION, cuerpoMd == null ? "" : cuerpoMd)));
+                    EscritorInforme.seccionTexto(titulo, cuerpoMd == null ? "" : cuerpoMd)));
             esc.escribirTodo(plan);
             return rutaInforme.toString();
         });

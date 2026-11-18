@@ -39,8 +39,12 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -152,8 +156,75 @@ public final class VerificadorTests {
      */
     public static ResultadoVerificacion verificarServicio(ProyectoEscaneado proyecto, EscritorSeguro esc, String fqnServicio,
                                                          Collection<String> casos, Collection<String> contarIntentos) {
-        return BloqueosSalida.conEjecucion(esc.salida(),
-                () -> verificarServicioBloqueado(proyecto, esc, fqnServicio, casos, contarIntentos));
+        Path salida = esc.salida();
+        if (ParalelismoVerificacion.efectivo(esc.proyecto(), salida) <= 1) {
+            return BloqueosSalida.conEjecucion(salida,
+                    () -> verificarServicioBloqueado(proyecto, esc, fqnServicio, casos, contarIntentos));
+        }
+        // Varias verificaciones a la vez: ejecución compartida. Nunca se toma la exclusiva dentro de la compartida.
+        Intento intento = new Intento();
+        intento.compartido = true;
+        for (int vuelta = 0; vuelta < MAX_VUELTAS_COMPARTIDAS; vuelta++) {
+            try {
+                ResultadoVerificacion rv = BloqueosSalida.conEjecucionCompartida(salida,
+                        () -> verificarServicioBloqueado(proyecto, esc, fqnServicio, casos, contarIntentos, intento));
+                if (rv != null) {
+                    return rv;
+                }
+                break;
+            } catch (PreparadorModulos.PreparacionPendiente pendiente) {
+                // Fuera de la compartida: un solo hilo prepara (el resto espera en la exclusiva y luego la encuentra hecha).
+                try {
+                    BloqueosSalida.conEjecucion(salida, () -> PreparadorModulos.obtener(proyecto, esc, pendiente.modulo()));
+                } catch (RuntimeException e) {
+                    // Queda cacheada: la verificación la convertirá en avisos como siempre.
+                    System.err.println("junit-gen: no se pudo preparar el módulo " + pendiente.modulo().modulo.nombre() + ": "
+                            + e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage()));
+                }
+            }
+        }
+        Intento exclusivo = new Intento();
+        exclusivo.importsPrevios = intento.importsPrevios;
+        exclusivo.sospechosos = intento.sospechosos;
+        return BloqueosSalida.conEjecucion(salida,
+                () -> verificarServicioBloqueado(proyecto, esc, fqnServicio, casos, contarIntentos, exclusivo));
+    }
+
+    /** Vueltas máximas en ejecución compartida antes de pasar a la exclusiva. */
+    private static final int MAX_VUELTAS_COMPARTIDAS = 2;
+    /** Cerrojos por carpeta de trabajo de un servicio: el mismo servicio no se verifica dos veces a la vez. */
+    private static final Map<String, ReentrantLock> CERROJOS_SERVICIO = new ConcurrentHashMap<>();
+    private static final String AVISO_SOLAPE_INTEGRIDAD =
+            " (había otras verificaciones en paralelo: el cambio puede deberse a cualquiera de ellas)";
+    /** Fragmentos (en minúsculas) del error que hacen sospechar de un choque de recursos entre pruebas en paralelo. */
+    private static final List<String> PISTAS_CHOQUE = List.of("bindexception", "address already in use", "filesystemexception",
+            "accessdeniedexception", "filealreadyexistsexception", "overlappingfilelockexception", "being used by another process",
+            "utilizado por otro proceso", "already in use", "database is locked", "locked by another process",
+            "superaron el tiempo máximo");
+
+    /**
+     * Estado de un intento de verificar un servicio: si va con la ejecución compartida, y lo que arrastra de un intento
+     * compartido con solape cuyo resultado se descartó para repetirlo en solitario.
+     */
+    private static final class Intento {
+        boolean compartido;
+        List<String> importsPrevios;
+        Map<String, String> sospechosos;
+    }
+
+    /** true si el resultado es un error de montaje o desconocido cuyo texto apunta a un choque de recursos. */
+    static boolean sospechosoDeChoque(ResultadoTest t) {
+        if (t == null || !(ClasificadorFallos.ERROR_MONTAJE.equals(t.estado) || ClasificadorFallos.DESCONOCIDO.equals(t.estado))) {
+            return false;
+        }
+        String texto = (Objects.toString(t.tipoError, "") + " " + Objects.toString(t.mensaje, "") + " " + Objects.toString(t.causa, ""))
+                .toLowerCase(Locale.ROOT);
+        for (String p : PISTAS_CHOQUE) {
+            if (texto.contains(p)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static ResultadoVerificacion verificarServicioBloqueado(ProyectoEscaneado proyecto, EscritorSeguro esc, String fqnServicio,
@@ -163,6 +234,17 @@ public final class VerificadorTests {
 
     private static ResultadoVerificacion verificarServicioBloqueado(ProyectoEscaneado proyecto, EscritorSeguro esc, String fqnServicio,
                                                                     Collection<String> casos, Collection<String> contarIntentos) {
+        return verificarServicioBloqueado(proyecto, esc, fqnServicio, casos, contarIntentos, null);
+    }
+
+    /**
+     * Verifica un servicio. Con {@code intento} compartido devuelve null (sin escribir nada) si hubo solape con otras
+     * verificaciones y algún resultado es sospechoso de choque de recursos: el llamante lo repite en exclusiva.
+     */
+    private static ResultadoVerificacion verificarServicioBloqueado(ProyectoEscaneado proyecto, EscritorSeguro esc, String fqnServicio,
+                                                                    Collection<String> casos, Collection<String> contarIntentos,
+                                                                    Intento intento) {
+        boolean compartido = intento != null && intento.compartido;
         ResultadoVerificacion rv = new ResultadoVerificacion();
         String simple = Textos.nombreSimple(fqnServicio);
         if (casos == null || casos.isEmpty()) {
@@ -191,10 +273,88 @@ public final class VerificadorTests {
         informe.append("- Módulo ").append(TextosInforme.codigo(modulo.modulo.nombre(), 200)).append('\n');
         Path dirTrabajo = PreparadorModulos.dirModulo(esc, modulo).resolve(CARPETA_SERVICIO)
                 .resolve(Textos.aIdentificador(simple) + "-" + Textos.sha256Hex(fqnServicio, LONGITUD_HASH_SERVICIO));
-        ejecutarEnModulo(proyecto, esc, modulo, generados, dirTrabajo, rv, jdks, alertas, informe);
-        cerrar(esc, rv, generados, jdks, alertas, informe, "Verificación: prueba de los tests de `" + simple + "`", proyecto,
-                contarIntentos);
-        return rv;
+        if (!compartido) {
+            ejecutarEnModulo(proyecto, esc, modulo, generados, dirTrabajo, rv, jdks, alertas, informe, false);
+            if (intento != null) {
+                aplicarRepeticionEnSolitario(esc, rv, intento, simple);
+            }
+            cerrar(esc, rv, generados, jdks, alertas, informe, "Verificación: prueba de los tests de `" + simple + "`", proyecto,
+                    contarIntentos);
+            return rv;
+        }
+        // Compartido: el mismo servicio nunca se verifica dos veces a la vez (cerrojo por carpeta de trabajo, hasta tras cerrar).
+        ReentrantLock cerrojoServicio = CERROJOS_SERVICIO.computeIfAbsent(dirTrabajo.toAbsolutePath().normalize().toString()
+                .toLowerCase(Locale.ROOT), k -> new ReentrantLock());
+        cerrojoServicio.lock();
+        try {
+            // Tras esperar el cerrojo, los tests pueden haber cambiado: se vuelven a leer.
+            ModuloEscaneado m = modulo;
+            List<ArchivoGenerado> actuales = BloqueosSalida.conEscritura(esc.salida(), () -> generados(esc.salida(), m, null, casos));
+            if (!actuales.isEmpty()) {
+                generados = actuales;
+            }
+            boolean solape;
+            ParalelismoVerificacion.Ventana ventana = ParalelismoVerificacion.abrirVentana(esc.salida());
+            try {
+                ejecutarEnModulo(proyecto, esc, modulo, generados, dirTrabajo, rv, jdks, alertas, informe, true);
+            } finally {
+                solape = ventana.cerrar();
+            }
+            if (solape) {
+                alertas.replaceAll(a -> a + AVISO_SOLAPE_INTEGRIDAD);
+                Map<String, String> sospechosos = new LinkedHashMap<>();
+                for (ResultadoTest t : rv.resultados) {
+                    if (t.caso != null && sospechosoDeChoque(t)) {
+                        sospechosos.put(t.caso, t.estado);
+                    }
+                }
+                if (!sospechosos.isEmpty() && ParalelismoVerificacion.repeticionPermitida(esc.salida())) {
+                    intento.sospechosos = sospechosos;
+                    intento.importsPrevios = new ArrayList<>(rv.importsReparados);
+                    return null;
+                }
+            }
+            cerrar(esc, rv, generados, jdks, alertas, informe, "Verificación: prueba de los tests de `" + simple + "`", proyecto,
+                    contarIntentos);
+            return rv;
+        } finally {
+            cerrojoServicio.unlock();
+        }
+    }
+
+    /**
+     * Segundo intento (en exclusiva) tras un resultado sospechoso con solape: si algún caso sospechoso ya no lo es, hubo un
+     * choque de recursos (esa salida pasa a verificar de una en una, con aviso); si no, solo se anota la repetición.
+     * En ambos casos recupera los imports reparados en el intento descartado. Antes de cerrar, para que el aviso salga en
+     * informe.md.
+     */
+    private static void aplicarRepeticionEnSolitario(EscritorSeguro esc, ResultadoVerificacion rv, Intento intento, String simple) {
+        if (intento.importsPrevios != null) {
+            for (String f : intento.importsPrevios) {
+                if (!rv.importsReparados.contains(f)) {
+                    rv.importsReparados.add(f);
+                }
+            }
+        }
+        if (intento.sospechosos == null || intento.sospechosos.isEmpty()) {
+            return;
+        }
+        boolean choque = false;
+        for (String caso : intento.sospechosos.keySet()) {
+            for (ResultadoTest t : rv.resultados) {
+                if (caso.equals(t.caso) && !sospechosoDeChoque(t)) {
+                    choque = true;
+                    break;
+                }
+            }
+        }
+        if (choque) {
+            ParalelismoVerificacion.registrarChoque(esc.salida());
+            rv.avisos.add("Posible choque de recursos entre pruebas en paralelo: `" + simple + "` se repitió en solitario y desde ahora "
+                    + "las pruebas de esta carpeta van de una en una. Para fijarlo, pon `verificadores: 1` en junit-gen.yml.");
+        } else {
+            ParalelismoVerificacion.contarRepeticionSinChoque(esc.salida());
+        }
     }
 
     /**
@@ -272,10 +432,25 @@ public final class VerificadorTests {
     private static void ejecutarEnModulo(ProyectoEscaneado proyecto, EscritorSeguro esc, ModuloEscaneado me, List<ArchivoGenerado> generados,
                                          Path dirTrabajo, ResultadoVerificacion rv, List<String> jdks, List<String> alertas,
                                          StringBuilder informe) {
+        ejecutarEnModulo(proyecto, esc, me, generados, dirTrabajo, rv, jdks, alertas, informe, false);
+    }
+
+    /**
+     * Como {@link #ejecutarEnModulo(ProyectoEscaneado, EscritorSeguro, ModuloEscaneado, List, Path, ResultadoVerificacion, List,
+     * List, StringBuilder)}; con {@code compartida} (ejecución compartida de la salida) nunca prepara el módulo: si hay que
+     * prepararlo lanza {@link PreparadorModulos.PreparacionPendiente}.
+     */
+    private static void ejecutarEnModulo(ProyectoEscaneado proyecto, EscritorSeguro esc, ModuloEscaneado me, List<ArchivoGenerado> generados,
+                                         Path dirTrabajo, ResultadoVerificacion rv, List<String> jdks, List<String> alertas,
+                                         StringBuilder informe, boolean compartida) {
         Map<String, GuardaIntegridad.Entrada> antes = GuardaIntegridad.instantanea(me.modulo.dir, false);
         String origenCp = "";
         try {
-            PreparadorModulos.Preparacion prep = PreparadorModulos.obtener(proyecto, esc, me);
+            PreparadorModulos.Preparacion prep = compartida ? PreparadorModulos.obtenerSinPreparar(proyecto, esc, me)
+                    : PreparadorModulos.obtener(proyecto, esc, me);
+            if (prep == null) {
+                throw new PreparadorModulos.PreparacionPendiente(me);
+            }
             origenCp = prep.origenCp();
             jdks.add(me.modulo.nombre() + ": " + prep.jdk().jdk().home() + " (" + prep.jdk().jdk().version() + ")"
                     + (prep.jdk().release() != null ? " --release " + prep.jdk().release() : ""));
@@ -432,6 +607,8 @@ public final class VerificadorTests {
                     rv.avisos.add(a);
                 }
             }
+        } catch (PreparadorModulos.PreparacionPendiente e) {
+            throw e;
         } catch (RuntimeException e) {
             rv.avisos.add("Verificación del módulo " + me.modulo.nombre() + " interrumpida: " + e.getMessage());
             String msg = TextosInforme.codigo(e.getMessage(), 500);

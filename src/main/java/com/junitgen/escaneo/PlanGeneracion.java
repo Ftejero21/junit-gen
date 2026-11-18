@@ -144,6 +144,7 @@ public final class PlanGeneracion {
     private final List<ServicioPlan> servicios = new ArrayList<>();
     private final List<String> avisos = new ArrayList<>();
     private boolean todas;
+    private boolean modoTodos;
     private int porcentaje = 60;
     private ConfigProyecto.OrdenServicios orden = ConfigProyecto.OrdenServicios.PRIORIDAD;
 
@@ -163,6 +164,9 @@ public final class PlanGeneracion {
 
     /** Línea corta del pie que indica el orden de los servicios. */
     String lineaOrden() {
+        if (modoTodos) {
+            return "Orden: modo «todos» (primero los servicios sin tests existentes, después los de más lógica).";
+        }
         return orden == ConfigProyecto.OrdenServicios.ALFABETICO
                 ? "Orden: alfabético por nombre de clase."
                 : "Orden: prioridad (junit-gen.yml).";
@@ -295,8 +299,29 @@ public final class PlanGeneracion {
         if (numServicios != null && (numServicios < MIN_SERVICIOS || numServicios > MAX_SERVICIOS)) {
             throw new IllegalArgumentException("numServicios debe estar entre " + MIN_SERVICIOS + " y " + MAX_SERVICIOS + ".");
         }
+        return calcularInterno(p, salida, numServicios, modulo, fqnsLimitados, todas, seleccionesSesion, orden, false);
+    }
+
+    /**
+     * Plan del modo «todos los servicios»: todos los candidatos (o los {@code maximo} primeros) sin el tope
+     * {@link #MAX_SERVICIOS}. Orden: servicios sin tests existentes primero, después los de más lógica (ramas).
+     * Sin aviso «solo hay X» cuando hay menos candidatos que {@code maximo}.
+     */
+    public static PlanGeneracion calcularTodos(ProyectoEscaneado p, Path salida, String modulo, boolean todas,
+                                               Map<String, SeleccionSpec> selecciones, Integer maximo) {
+        if (maximo != null && maximo < MIN_SERVICIOS) {
+            throw new IllegalArgumentException("El máximo de servicios debe ser al menos " + MIN_SERVICIOS + ".");
+        }
+        return calcularInterno(p, salida, maximo, modulo, null, todas, selecciones, ConfigProyecto.OrdenServicios.PRIORIDAD, true);
+    }
+
+    private static PlanGeneracion calcularInterno(ProyectoEscaneado p, Path salida, Integer numServicios, String modulo,
+                                                  Collection<String> fqnsLimitados, boolean todas,
+                                                  Map<String, SeleccionSpec> seleccionesSesion,
+                                                  ConfigProyecto.OrdenServicios orden, boolean modoTodos) {
         PlanGeneracion plan = new PlanGeneracion(numServicios);
         plan.todas = todas;
+        plan.modoTodos = modoTodos;
         plan.orden = orden == null ? ConfigProyecto.OrdenServicios.ALFABETICO : orden;
         Spec previo = leerSpec(salida, plan.avisos);
         Map<String, Map<String, Integer>> enSpec = metodosEnSpec(previo);
@@ -337,7 +362,7 @@ public final class PlanGeneracion {
                         sel.funciones().size(), (int) sel.numTriviales(), (int) sel.numFueraPorcentaje(), sel.origen()));
             }
         }
-        candidatos.sort(comparador(plan.orden));
+        candidatos.sort(modoTodos ? COMPARADOR_TODOS : comparador(plan.orden));
         int tomar = numServicios == null ? candidatos.size() : Math.min(numServicios, candidatos.size());
         plan.servicios.addAll(candidatos.subList(0, tomar));
         if (!refactor.isEmpty()) {
@@ -353,11 +378,19 @@ public final class PlanGeneracion {
         }
         if (candidatos.isEmpty()) {
             plan.avisos.add("No hay servicios con métodos elegibles: el plan está vacío.");
-        } else if (numServicios != null && candidatos.size() < numServicios) {
+        } else if (!modoTodos && numServicios != null && candidatos.size() < numServicios) {
             plan.avisos.add("Solo hay " + candidatos.size() + " servicios disponibles de los " + numServicios + " pedidos.");
         }
         return plan;
     }
+
+    /** Orden del modo «todos»: sin tests existentes primero → más ramas → más métodos sin tests → FQN → módulo. */
+    private static final Comparator<ServicioPlan> COMPARADOR_TODOS = Comparator.<ServicioPlan, Boolean>comparing(s -> s.tests > 0)
+            .thenComparingInt(s -> -s.ramas)
+            .thenComparingInt(s -> -s.objetivos.size())
+            .thenComparingInt(s -> -s.sinTests)
+            .thenComparing(s -> s.clase.fqn)
+            .thenComparing(s -> s.modulo.modulo.rel);
 
     /** Comparador de servicios para el orden indicado. */
     private static Comparator<ServicioPlan> comparador(ConfigProyecto.OrdenServicios orden) {

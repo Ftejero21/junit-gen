@@ -31,7 +31,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * compiladas por junit-gen). Se hace una vez por módulo y se cachea en memoria y en
  * {@code <salida>/.junit-gen-tmp/<módulo>/prep/prep.json}, invalidándose por huella (archivos de build,
  * junit-gen.yml, JDK y, si el proyecto no está compilado, las fuentes main). Los fallos recientes se cachean
- * {@link #CADUCIDAD_FALLO} para no repetir Maven. Se llama siempre con el bloqueo de ejecución de la salida.
+ * {@link #CADUCIDAD_FALLO} para no repetir Maven. {@link #obtener} se llama siempre con la ejecución exclusiva de la
+ * salida; con la compartida solo se puede usar {@link #obtenerSinPreparar}.
  */
 public final class PreparadorModulos {
 
@@ -85,11 +86,62 @@ public final class PreparadorModulos {
     }
 
     /**
+     * Señal de que el módulo necesita prepararse y quien llamó con la ejecución compartida no puede hacerlo: debe soltar
+     * la compartida y preparar con la ejecución exclusiva ({@link #obtener}).
+     */
+    static final class PreparacionPendiente extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+        private final transient ModuloEscaneado modulo;
+
+        PreparacionPendiente(ModuloEscaneado modulo) {
+            super("El módulo " + modulo.modulo.nombre() + " necesita prepararse.", null, false, false);
+            this.modulo = modulo;
+        }
+
+        ModuloEscaneado modulo() {
+            return modulo;
+        }
+    }
+
+    /** Estado previo a preparar: clave, JDK, huella, avisos frescos y, si la hay vigente, la preparación lista. */
+    private record Previa(String clave, LocalizadorJdk.Seleccion jdk, String huella, boolean proyectoCompilado,
+                          List<String> avisosFrescos, Preparacion lista, Path dirPrep) {
+    }
+
+    /**
      * Devuelve la preparación del módulo: la de memoria o la de disco si la huella coincide y todas sus rutas
      * existen; si no, la prepara de nuevo (borrando {@code <tmp>/<módulo>} entero). Un fallo reciente con la
-     * misma huella se relanza sin repetir Maven/Gradle.
+     * misma huella se relanza sin repetir Maven/Gradle. Siempre con la ejecución exclusiva de la salida: prepara y
+     * borra {@code <tmp>/<módulo>}, incluidas las carpetas de trabajo de verificaciones en curso.
      */
     public static Preparacion obtener(ProyectoEscaneado p, EscritorSeguro esc, ModuloEscaneado me) {
+        Previa pv = previa(p, esc, me);
+        if (pv.lista() != null) {
+            return pv.lista();
+        }
+        String clave = pv.clave();
+        try {
+            Preparacion nueva = preparar(p, esc, me, pv.jdk(), pv.huella(), pv.proyectoCompilado(), pv.dirPrep());
+            PREPARACIONES.put(clave, nueva);
+            FALLOS.remove(clave);
+            return conAvisos(nueva, pv.jdk(), pv.avisosFrescos(), false);
+        } catch (RuntimeException e) {
+            PREPARACIONES.remove(clave);
+            FALLOS.put(clave, new Fallo(pv.huella(), e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(), Instant.now()));
+            throw e;
+        }
+    }
+
+    /**
+     * Como {@link #obtener} pero sin preparar nunca (válido con la ejecución compartida): devuelve la preparación vigente
+     * (memoria o disco), relanza el fallo reciente cacheado igual que {@code obtener} y devuelve null si habría que
+     * preparar.
+     */
+    static Preparacion obtenerSinPreparar(ProyectoEscaneado p, EscritorSeguro esc, ModuloEscaneado me) {
+        return previa(p, esc, me).lista();
+    }
+
+    private static Previa previa(ProyectoEscaneado p, EscritorSeguro esc, ModuloEscaneado me) {
         String clave = esc.salida().toString().toLowerCase(Locale.ROOT) + "|" + ContextoVerificacion.clave(me);
         String claveJdk = clave + "|" + Objects.toString(me.versiones.java) + "|" + Objects.toString(me.config.jdk);
         LocalizadorJdk.Seleccion jdk = JDKS.get(claveJdk);
@@ -109,7 +161,7 @@ public final class PreparadorModulos {
         Preparacion enMemoria = PREPARACIONES.get(clave);
         if (enMemoria != null && enMemoria.huella().equals(huella) && rutasExisten(enMemoria.mvn(), enMemoria.deps(),
                 enMemoria.clasesProyecto())) {
-            return conAvisos(enMemoria, jdk, avisosFrescos, true);
+            return new Previa(clave, jdk, huella, proyectoCompilado, avisosFrescos, conAvisos(enMemoria, jdk, avisosFrescos, true), null);
         }
         Fallo f = FALLOS.get(clave);
         if (f != null && f.huella().equals(huella) && Duration.between(f.instante(), Instant.now()).compareTo(CADUCIDAD_FALLO) < 0) {
@@ -120,18 +172,9 @@ public final class PreparadorModulos {
         if (deDisco != null) {
             PREPARACIONES.put(clave, deDisco);
             FALLOS.remove(clave);
-            return conAvisos(deDisco, jdk, avisosFrescos, true);
+            return new Previa(clave, jdk, huella, proyectoCompilado, avisosFrescos, conAvisos(deDisco, jdk, avisosFrescos, true), dirPrep);
         }
-        try {
-            Preparacion nueva = preparar(p, esc, me, jdk, huella, proyectoCompilado, dirPrep);
-            PREPARACIONES.put(clave, nueva);
-            FALLOS.remove(clave);
-            return conAvisos(nueva, jdk, avisosFrescos, false);
-        } catch (RuntimeException e) {
-            PREPARACIONES.remove(clave);
-            FALLOS.put(clave, new Fallo(huella, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(), Instant.now()));
-            throw e;
-        }
+        return new Previa(clave, jdk, huella, proyectoCompilado, avisosFrescos, null, dirPrep);
     }
 
     /**

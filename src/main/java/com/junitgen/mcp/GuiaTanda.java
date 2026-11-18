@@ -322,7 +322,7 @@ final class GuiaTanda {
         }
         Path salida = sesion.salidaDe(proyecto);
         String c = cuerpo == null ? "" : cuerpo;
-        if (c.contains("\"respuestaFinal\":") || c.contains("\nrespuestaFinal:\n")) {
+        if (c.contains("\"respuestaFinal\":") || c.contains("\nrespuestaFinal:\n") || c.startsWith(OleadasTodos.MARCA_CONFIRMACION)) {
             return null;
         }
         Integer bloque = sesion.bloqueLlamada();
@@ -382,6 +382,7 @@ final class GuiaTanda {
                 }
             }
         }
+        pos = OleadasTodos.prefijoPosicion(sesion, proyecto) + pos;
         String prefijo = PREFIJO + pos + "): ";
         String sufijo = bloque == null ? SUFIJO : " No escribas ningún mensaje al usuario hasta recibir BLOQUE " + bloque + " TERMINADO.";
         int libre = MAX_ACCION - LimitesRespuesta.bytes(prefijo) - LimitesRespuesta.bytes(sufijo);

@@ -136,16 +136,24 @@ public final class EjecutorJUnit {
         if (mvn == null) {
             throw new SeguridadException("Falta junit-platform-console-standalone " + version + " en la caché Maven y no hay Maven para descargarlo.");
         }
-        Map<String, String> props = new LinkedHashMap<>();
-        props.put("artifact", "org.junit.platform:junit-platform-console-standalone:" + version);
-        props.put("transitive", "false");
-        ProcesoSeguro.Resultado r = ctx.proceso.maven(mvn, ProcesoSeguro.GoalMaven.GET, null, props, null, ctx.javaHerramienta,
-                ctx.tmp.resolve("run-maven"), ctx.log("maven-get-standalone.log"));
-        if (!r.correcto() || !Files.isRegularFile(jar)) {
-            throw new SeguridadException("No se pudo obtener junit-platform-console-standalone " + version + " (log: " + r.log() + ").");
+        // La descarga a la caché compartida de Maven es única aunque haya varias verificaciones a la vez.
+        synchronized (DESCARGA_STANDALONE) {
+            if (Files.isRegularFile(jar)) {
+                return jar;
+            }
+            Map<String, String> props = new LinkedHashMap<>();
+            props.put("artifact", "org.junit.platform:junit-platform-console-standalone:" + version);
+            props.put("transitive", "false");
+            ProcesoSeguro.Resultado r = ctx.proceso.maven(mvn, ProcesoSeguro.GoalMaven.GET, null, props, null, ctx.javaHerramienta,
+                    ctx.tmp.resolve("run-maven"), ctx.log("maven-get-standalone.log"));
+            if (!r.correcto() || !Files.isRegularFile(jar)) {
+                throw new SeguridadException("No se pudo obtener junit-platform-console-standalone " + version + " (log: " + r.log() + ").");
+            }
+            return jar;
         }
-        return jar;
     }
+
+    private static final Object DESCARGA_STANDALONE = new Object();
 
     /** JDK 8 no admite @argfile en java: jar con Class-Path en el manifiesto, dentro del temporal. */
     private static Path pathingJar(ContextoVerificacion ctx, List<Path> cp) {

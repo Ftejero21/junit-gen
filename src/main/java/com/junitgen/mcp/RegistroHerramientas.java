@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 /** Registro de herramientas MCP y ejecución con el aviso de solo lectura como primera línea. */
@@ -105,11 +106,18 @@ public class RegistroHerramientas {
      */
     public ObjectNode llamar(Herramienta h, JsonNode args, SesionMcp sesion) {
         ReentrantLock cerrojo = sesion.cerrojo();
+        long antesCerrojo = System.nanoTime();
         cerrojo.lock();
+        long esperaTurnoNanos = System.nanoTime() - antesCerrojo;
         try {
             Integer bloque = null;
             try {
                 bloque = BloquesTanda.resolver(sesion, h.nombre(), args);
+                if (bloque != null) {
+                    // Medición: lo que la llamada del bloque esperó su turno en el cerrojo de sesión.
+                    BloquesTanda.sumarEspera(sesion, sesion.fachada().ultimaRuta(), bloque,
+                            TimeUnit.NANOSECONDS.toMillis(Math.max(0, esperaTurnoNanos)), false);
+                }
             } catch (RuntimeException e) {
                 System.err.println("junit-gen: no se pudo deducir el bloque de la llamada a " + h.nombre() + ": "
                         + e.getClass().getSimpleName());
@@ -163,6 +171,15 @@ public class RegistroHerramientas {
             e.printStackTrace(System.err);
             texto = "Error inesperado en " + h.nombre() + ": " + e.getClass().getSimpleName() + ": " + e.getMessage();
             error = true;
+        }
+        // Modo «todos»: el cierre de la tanda de una oleada se sustituye por la orden de seguir con la siguiente (o el informe global).
+        try {
+            Herramienta.Resultado r = OleadasTodos.trasRespuesta(sesion, h.nombre(), texto, error);
+            texto = r.texto();
+            error = r.error();
+        } catch (RuntimeException e) {
+            System.err.println("junit-gen: no se pudo encadenar la oleada del modo «todos»: " + e.getClass().getSimpleName() + ": "
+                    + e.getMessage());
         }
         // El aviso se calcula después de ejecutar para reflejar el proyecto y la salida ya resueltos.
         String aviso;

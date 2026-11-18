@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.junitgen.Fachada;
 import com.junitgen.escaneo.SeleccionFunciones;
+import com.junitgen.generacion.AlmacenOleadas;
 import com.junitgen.generacion.AlmacenSpec;
 import com.junitgen.generacion.AlmacenTanda;
+import com.junitgen.generacion.Oleadas;
 import com.junitgen.generacion.RutasSalida;
 import com.junitgen.generacion.Tanda;
 import com.junitgen.seguridad.BloqueosSalida;
@@ -1444,8 +1446,71 @@ public class SesionMcp {
                 new EscritorSeguro(proyectoReal, salidaReal).escribir(AlmacenTanda.ruta(salidaReal), texto);
                 return null;
             });
+            guardarOleadas(proyectoReal, salidaReal);
         } catch (RuntimeException e) {
             System.err.println("junit-gen: no se pudo guardar " + RutasSalida.TANDA + ": " + e.getMessage());
+        }
+    }
+
+    // ------------------------------------------------------------- campaña «todos» persistente (oleadas.json)
+
+    /** clave(proyecto) → campaña del modo «todos» en memoria (se vuelca a oleadas.json con {@link #guardarOleadas}). */
+    private final Map<String, Oleadas> campanas = new ConcurrentHashMap<>();
+
+    /** Fija la campaña «todos» en memoria del proyecto (null la olvida). */
+    public void fijarOleadas(Path proyecto, Oleadas o) {
+        if (proyecto == null) {
+            return;
+        }
+        try {
+            String k = clave(RutaSegura.normalizar(proyecto));
+            if (o == null) {
+                campanas.remove(k);
+            } else {
+                campanas.put(k, o);
+            }
+        } catch (RuntimeException e) {
+            System.err.println("junit-gen: no se pudo recordar la campaña «todos»: " + e.getMessage());
+        }
+    }
+
+    /** Campaña «todos» en memoria del proyecto, o null. */
+    public Oleadas oleadas(Path proyecto) {
+        if (proyecto == null) {
+            return null;
+        }
+        try {
+            return campanas.get(clave(RutaSegura.normalizar(proyecto)));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Vuelca la campaña «todos» del proyecto a oleadas.json de la salida, solo si la carpeta ya existe (el escaneo no la
+     * crea; se escribirá en el primer guardado con carpeta). Bajo el bloqueo de escritura; un fallo va a stderr.
+     */
+    public void guardarOleadas(Path proyecto, Path salidaReal) {
+        if (proyecto == null || salidaReal == null) {
+            return;
+        }
+        try {
+            Path proyectoReal = RutaSegura.normalizar(proyecto);
+            Oleadas o = campanas.get(clave(proyectoReal));
+            if (o == null || !java.nio.file.Files.isDirectory(salidaReal)) {
+                return;
+            }
+            BloqueosSalida.conEscritura(salidaReal, () -> {
+                String texto;
+                synchronized (o) {
+                    o.actualizada = Instant.now().toString();
+                    texto = AlmacenOleadas.serializar(o);
+                }
+                new EscritorSeguro(proyectoReal, salidaReal).escribir(AlmacenOleadas.ruta(salidaReal), texto);
+                return null;
+            });
+        } catch (RuntimeException e) {
+            System.err.println("junit-gen: no se pudo guardar " + RutasSalida.OLEADAS + ": " + e.getMessage());
         }
     }
 

@@ -293,6 +293,8 @@ public class HerramientaEjecutar implements Herramienta {
         if (BloquesTanda.terminado(sesion, proyecto, bloque)) {
             return new Resultado(Json.compacto(BloquesTanda.nodoTerminado(sesion, proyecto, salida, bloque, null)), false);
         }
+        // Cola de trabajo: si no le queda nada por generar y hay servicios sin asignar (o sin tomar), le toca el siguiente.
+        BloquesTanda.reclamar(sesion, proyecto, bloque);
         SesionMcp.ProgresoPlan pp = sesion.progresoPlan(proyecto);
         if (pp == null || pp.restantes() > 0) {
             return rechazo(sesion, proyecto, salida, "ejecutar_tests {bloque: " + bloque + "} no ha ejecutado nada: al bloque le faltan "
@@ -310,7 +312,7 @@ public class HerramientaEjecutar implements Herramienta {
         }
         // Un solo reintento por bloque: los servicios que quedaron con casos sin estado se vuelven a verificar antes de cerrar.
         Set<String> reintento = serviciosSinEstado(sesion, salida, servicios);
-        if (!reintento.isEmpty() && sesion.contarSinCorregir("reverificar-bloque|" + bloque, 0) == 1) {
+        if (!reintento.isEmpty() && sesion.contarSinCorregir("reverificar-bloque|" + t.creada + "|" + bloque, 0) == 1) {
             ver.encolar(proyecto, salida, reintento);
             if (!ver.esperarInactiva(salida, restoEspera(sesion))) {
                 return verificandoBloque(sesion, salida);

@@ -2,7 +2,7 @@
 name: generartest
 description: Genera tests unitarios JUnit del proyecto abierto con junit-gen (sin preguntar rutas ni módulo)
 disable-model-invocation: true
-argument-hint: "N (nº de servicios) | servicios | servicio funciones=a,b | todas | continuar | ruta | o una frase: «tests de 10 servicios»"
+argument-hint: "N (nº de servicios) | servicios | servicio funciones=a,b | todas | todos | todos máx 50 | continuar | ruta | o una frase: «tests de 10 servicios»"
 allowed-tools: "mcp__plugin_junit-gen_junit-gen__*, Agent"
 disallowed-tools: Bash, PowerShell, Monitor, Edit, Write, NotebookEdit
 ---
@@ -23,10 +23,17 @@ Genera tests unitarios JUnit del proyecto abierto usando **solo las herramientas
 
 - Si dispones de una herramienta para lanzar subagentes (`Agent` en Claude Code; `task` o `runSubagent` en GitHub Copilot), añade `paralelo: true` a la llamada a `escanear_proyecto` que crea el plan (nunca junto a `continuar`). En Claude Code y Copilot junit-gen ya reparte en bloques por su cuenta.
 - Si la respuesta trae bloques (tabla «Bloque | Servicios» y `promptTrabajador`), **no generes tú ningún servicio**: en UN solo mensaje, lanza un subagente por bloque (`Agent` con `subagent_type: general-purpose` en Claude Code; `task` o `runSubagent` en Copilot; sin `model`, sin segundo plano) con el prompt exacto de `promptTrabajador` cambiando `<K>` por el número del bloque. Lanzar los subagentes cuenta como el paso pendiente: no escribas nada al usuario mientras trabajan.
+- La cola de servicios la reparte junit-gen: cada bloque recibe el siguiente servicio al terminar el suyo (línea «Cola común» de la respuesta). No repartas servicios entre subagentes ni lances más subagentes que bloques de la tabla.
 - Cuando vuelvan todos, **no resumas lo que devuelven**: llama a `ejecutar_tests {}` (repítela mientras devuelva `verificando: true`) y sigue `accionRequerida` hasta `respuestaFinal`. Si `ejecutar_tests {}` indica «bloques sin generar» (un subagente falló), relánzalos o hazlos tú con `tomar_bloque {bloque: K, instrucciones: true}`; si solo quedan casos por arreglar, te llegan a ti como siempre.
 - Con un solo bloque (menos de 3 servicios o `JUNITGEN_MAX_BLOQUES=1`) lo haces tú: `tomar_bloque {bloque: 1, instrucciones: true}`, sigue sus instrucciones y cada `accionRequerida`, y al recibir «BLOQUE 1 TERMINADO» llama a `ejecutar_tests {}`.
 - Si un subagente devuelve «SIN_SESION_COMPARTIDA» (no comparte la sesión MCP) o falla, haz tú los bloques con `tomar_bloque`.
 - Si junit-gen no activa el modo paralelo (te lo dice en una nota) o no pasaste `paralelo`, el flujo de abajo es el de siempre.
+
+## Modo «todos» (oleadas)
+
+- `/generartest todos` (o la frase «genera tests para todos los servicios», `todos máx 50`) → `escanear_proyecto` con `peticion` = el texto tal cual. Con todos los servicios, junit-gen trabaja por **oleadas** de 25 servicios (variable `JUNITGEN_OLEADA` o clave `oleada` de junit-gen.yml, de 1 a 100): cada oleada es una tanda normal (paralela o secuencial, como siempre) y junit-gen las encadena hasta un informe global.
+- Sin límite explícito, la respuesta empieza por `accionRequerida: CONFIRMACIÓN «todos»`: pregunta al usuario exactamente lo que dice (servicios, oleadas, tiempo y coste estimados) y, solo si responde que sí, llama a `escanear_proyecto {todosServicios: true, confirmarTodos: true}` (con `maxServicios` si lo limitó). Si dice que no, no hagas nada. Es la ÚNICA confirmación: con `todos máx N` o con `JUNITGEN_TODOS_SIN_CONFIRMAR=1` no hay ninguna.
+- Al cerrarse una oleada con servicios pendientes, la respuesta trae `accionRequerida: NO HAS TERMINADO: OLEADA k de N CERRADA …` y **nunca** `respuestaFinal`: llama a `escanear_proyecto` con los argumentos exactos que indica (`continuar`, `ruta`, `carpetaSalida`; también en `llamada`) y lanza subagentes NUEVOS (no reutilices los de la oleada anterior). No escribas nada al usuario hasta recibir `respuestaFinal` con los totales globales; el resumen global queda en `informe.md` y el progreso en `oleadas.json` (se retoma con `continuar`, también en un chat nuevo). Relanzar `todos`/`todos máx N` con una campaña sin cerrar la retoma.
 
 ## PRIMERO: lee la línea `ARGUMENTS:`
 
@@ -40,6 +47,8 @@ El texto que el usuario escribió tras `/generartest` llega en la línea `ARGUME
 | `pedidoService funciones=crear,cancelar` | `escanear_proyecto` con `servicios: ["pedidoService"]` y `funciones: ["crear","cancelar"]` (las elige el usuario: no llames a `seleccionar_funciones`) |
 | `3 todas` | `escanear_proyecto` con `numServicios: 3` y `todas: true` (100 % de las funciones) |
 | `2 usuarioService pedidoService facturaService` | `escanear_proyecto` con `numServicios: 2` y `servicios: ["usuarioService","pedidoService","facturaService"]` |
+| `todos` | `escanear_proyecto` con `peticion: "todos"` (todos los servicios por oleadas; ver «Modo «todos»»: junit-gen pide una única confirmación) |
+| `todos máx 50` | `escanear_proyecto` con `peticion: "todos máx 50"` (límite explícito: sin confirmación) |
 | `continuar` | `escanear_proyecto` con `continuar: true` (sin `numServicios`, `servicios`, `funciones` ni `todas`): retoma la tanda guardada por el siguiente servicio |
 | `ruta` | `cambiar_ruta_salida` |
 | una frase (cualquier texto que NO sea exactamente uno de los formatos de arriba), p. ej. `generame los tests para 10 servicios`, `genera tests de diez servicios`, `prueba todas las funciones de usuarioService`, `haz tests de pedidoService solo de crear y cancelar`, `tests de PedidoService, UsuarioService y FacturaService`, `continúa la tanda` | `escanear_proyecto` con `peticion: "<el texto de ARGUMENTS tal cual, sin cambiar, traducir ni resumir nada>"` (y `ruta`). NO pases `numServicios`, `servicios`, `funciones`, `todas` ni `continuar`: junit-gen interpreta la frase él solo |
@@ -102,6 +111,7 @@ Lo que el usuario escriba después de `/generartest` (o pida en el chat) se inte
 - **Una frase libre** (p. ej. «generame los tests para 10 servicios», «prueba todas las funciones de usuarioService», «tests de pedidoService solo de crear y cancelar», «continúa la tanda») → `escanear_proyecto` con `peticion` = el texto tal cual (y `ruta`), sin `numServicios`, `servicios`, `funciones`, `todas` ni `continuar`: junit-gen deduce el número (en cifra o en letra), los servicios, `todas`, las funciones y `continuar`; ignora las palabras de relleno; avisa de los nombres que no existen (con parecidos) y, si no deduce nada, devuelve `accionRequerida` con la pregunta exacta. Si la frase pide cambiar la carpeta de salida → `cambiar_ruta_salida`.
 - La palabra **`todas`** (junto a N o a servicios, p. ej. `usuarioService todas` o `3 todas`) → `todas: true` en `escanear_proyecto`: 100 % de las funciones públicas, incluidas las triviales. `todas` nunca es un nombre de servicio; solo se pasa si el usuario lo escribió.
 - **`funciones=a,b`** (sin espacios, junto a UN servicio, p. ej. `pedidoService funciones=crear,cancelar`) → `funciones: ["a","b"]` en `escanear_proyecto`: se prueban exactamente esas (no llames a `seleccionar_funciones`); solo se pasa si el usuario lo escribió; para varios servicios, un comando por servicio.
+- **`todos`** / **`todos máx N`** (o «genera tests para todos los servicios») → `escanear_proyecto` con `peticion` = el texto tal cual: modo por oleadas de 25 servicios, con una única confirmación (ninguna con `máx N`); ver «Modo «todos» (oleadas)».
 - La palabra **`continuar`** (sola) → `continuar: true` en `escanear_proyecto` (sin `numServicios`, `servicios`, `funciones` ni `todas`): junit-gen lee `tanda.json` de la carpeta de salida y retoma la tanda por el siguiente servicio, sin repetir lo ya generado, también en un chat o proceso nuevo (si la pregunta de carpeta aparece, elige la misma carpeta de la tanda). Si responde «No hay ninguna tanda pendiente…», díselo al usuario y que use `/generartest N`. Úsalo cuando el contexto se agote a mitad de una tanda grande o, por tu cuenta, si has perdido el hilo de la tanda en curso (contexto resumido o compactado).
 - Sin argumentos → llama a `escanear_proyecto` sin `numServicios` ni `servicios` y después pregunta al usuario exactamente: «¿Cuántos servicios (N) o qué servicios quieres probar? junit-gen elegirá sus funciones más relevantes (añade `todas` para probarlas todas)»; vuelve a llamar con `numServicios` o `servicios` según su respuesta.
 

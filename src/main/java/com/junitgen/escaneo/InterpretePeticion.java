@@ -29,8 +29,12 @@ public final class InterpretePeticion {
     public record Token(String texto, String clave, boolean trasMarcador) {
     }
 
-    /** Análisis léxico (sin proyecto): texto saneado, trozos, intención, número (sin validar rango), todas y avisos. */
-    public record Lexico(String texto, List<Token> tokens, Intencion intencion, Integer numero, boolean todas, List<String> avisos) {
+    /**
+     * Análisis léxico (sin proyecto): texto saneado, trozos, intención, número (sin validar rango), todas, modo «todos los
+     * servicios» (con su máximo opcional) y avisos.
+     */
+    public record Lexico(String texto, List<Token> tokens, Intencion intencion, Integer numero, boolean todas,
+            boolean todosServicios, Integer maxTodos, List<String> avisos) {
     }
 
     /** Resultado contra el proyecto: servicios, funciones, nombres con forma de clase no encontrados y avisos. */
@@ -58,6 +62,7 @@ public final class InterpretePeticion {
     private static final String POR = "por";
     private static final String Y = "y";
     private static final String TODAS = "todas";
+    private static final String AVISO_TODOS_NUMERO = "con «todos» un número sin marca es el de servicios; para limitar usa `todos máx N`";
     private static final int CIEN = 100;
     private static final int MAX_FUNCIONES_AVISO = 15;
     private static final int MAX_NOMBRES_AVISO = 10;
@@ -75,6 +80,8 @@ public final class InterpretePeticion {
     private static final Set<String> ARTICULOS_TODAS = Set.of("las", "los", "sus");
     /** «todos»/«todo»: solo valen como «todas» si siguen funciones o métodos. */
     private static final Set<String> TODOS = Set.of("todos", "todo");
+    /** Marcas que convierten el número siguiente en el máximo del modo «todos» (`todos máx 50`). */
+    private static final Set<String> MARCAS_MAXIMO = Set.of("max", "maximo", "limite", "tope", "hasta");
     /** Palabras tras las que un número es una versión (JUnit 5, Java 17…), no un número de servicios. */
     private static final Set<String> PREFIJOS_VERSION = Set.of("junit", "java", "jdk", "mockito");
     /** «por ciento» / «por cien». */
@@ -171,7 +178,11 @@ public final class InterpretePeticion {
             }
         }
         Cantidades q = cantidades(tokens);
-        return new Lexico(limpio, List.copyOf(tokens), intencion(tokens, q.numero()), q.numero(), q.todas(), List.copyOf(avisos));
+        if (q.avisoTodos()) {
+            avisos.add(AVISO_TODOS_NUMERO);
+        }
+        return new Lexico(limpio, List.copyOf(tokens), intencion(tokens, q.numero()), q.numero(), q.todas(),
+                q.todosServicios(), q.maxTodos(), List.copyOf(avisos));
     }
 
     /** Texto recortado a {@link #MAX_TEXTO}, en una línea (controles y saltos → espacio). */
@@ -229,17 +240,22 @@ public final class InterpretePeticion {
     private record Lectura(int valor, int fin, boolean porcentaje) {
     }
 
-    private record Cantidades(Integer numero, boolean todas, Set<Integer> consumidos) {
+    private record Cantidades(Integer numero, boolean todas, boolean todosServicios, Integer maxTodos, boolean avisoTodos,
+            Set<Integer> consumidos) {
     }
 
-    /** Número de servicios, «todas» y los índices de tokens consumidos por ellos (números, %, todas/todos). */
+    /** Número suelto (no porcentaje ni versión): posición de inicio, valor, índice de fin y si lo sigue una palabra de servicio. */
+    private record NumeroSuelto(int inicio, int valor, int fin, boolean conServicio) {
+    }
+
+    /** Número de servicios, «todas», «todos los servicios» (con máximo) y los índices de tokens consumidos por ellos. */
     private static Cantidades cantidades(List<Token> tokens) {
         List<String> c = new ArrayList<>();
         tokens.forEach(t -> c.add(t.clave()));
         Set<Integer> consumidos = new HashSet<>();
         boolean todas = false;
-        Integer primero = null;
-        Integer conServicio = null;
+        boolean todosServicios = false;
+        List<NumeroSuelto> sueltos = new ArrayList<>();
         int i = 0;
         while (i < c.size()) {
             Lectura l = leerNumero(c, i);
@@ -263,12 +279,7 @@ public final class InterpretePeticion {
             if (porcentaje) {
                 todas |= l.valor() == CIEN;
             } else if (!version) {
-                if (primero == null) {
-                    primero = l.valor();
-                }
-                if (conServicio == null && l.fin() < c.size() && PALABRAS_SERVICIO.contains(c.get(l.fin()))) {
-                    conServicio = l.valor();
-                }
+                sueltos.add(new NumeroSuelto(i, l.valor(), l.fin(), l.fin() < c.size() && PALABRAS_SERVICIO.contains(c.get(l.fin()))));
             }
             i = fin;
         }
@@ -279,13 +290,53 @@ public final class InterpretePeticion {
             String w = c.get(k);
             if (TODAS.equals(w)) {
                 consumidos.add(k);
-                todas |= !PALABRAS_SERVICIO.contains(siguienteTrasArticulos(c, k));
+                if (PALABRAS_SERVICIO.contains(siguienteTrasArticulos(c, k))) {
+                    todosServicios = true;
+                } else {
+                    todas = true;
+                }
             } else if (TODOS.contains(w)) {
                 consumidos.add(k);
-                todas |= PALABRAS_FUNCION.contains(siguienteTrasArticulos(c, k));
+                if (PALABRAS_FUNCION.contains(siguienteTrasArticulos(c, k))) {
+                    todas = true;
+                } else {
+                    todosServicios = true;
+                }
             }
         }
-        return new Cantidades(conServicio != null ? conServicio : primero, todas, consumidos);
+        Integer maxTodos = null;
+        boolean avisoTodos = false;
+        if (todosServicios) {
+            List<NumeroSuelto> restantes = new ArrayList<>();
+            for (NumeroSuelto n : sueltos) {
+                if (maxTodos == null && n.inicio() > 0 && MARCAS_MAXIMO.contains(c.get(n.inicio() - 1))) {
+                    maxTodos = n.valor();
+                    consumidos.add(n.inicio() - 1);
+                    for (int k = n.inicio(); k < n.fin(); k++) {
+                        consumidos.add(k);
+                    }
+                } else {
+                    restantes.add(n);
+                }
+            }
+            sueltos = restantes;
+            if (!sueltos.isEmpty()) {
+                todosServicios = false;
+                maxTodos = null;
+                avisoTodos = true;
+            }
+        }
+        Integer primero = null;
+        Integer conServicio = null;
+        for (NumeroSuelto n : sueltos) {
+            if (primero == null) {
+                primero = n.valor();
+            }
+            if (conServicio == null && n.conServicio()) {
+                conServicio = n.valor();
+            }
+        }
+        return new Cantidades(conServicio != null ? conServicio : primero, todas, todosServicios, maxTodos, avisoTodos, consumidos);
     }
 
     private static String siguienteTrasArticulos(List<String> c, int k) {

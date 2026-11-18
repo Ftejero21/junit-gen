@@ -66,6 +66,28 @@ public final class CargadorConfig {
     }
 
     /**
+     * Verificaciones de servicio simultáneas (1..8): solo se lee del {@code junit-gen.yml} de la raíz (sin caché); null si
+     * {@code raiz} es null o no está configurado.
+     */
+    public static Integer verificadores(Path raiz) {
+        if (raiz == null) {
+            return null;
+        }
+        return leer(raiz.resolve(ARCHIVO)).verificadores;
+    }
+
+    /**
+     * Servicios por oleada del modo «todos» (1..100): solo se lee del {@code junit-gen.yml} de la raíz (sin caché); null si
+     * {@code raiz} es null o no está configurado.
+     */
+    public static Integer oleada(Path raiz) {
+        if (raiz == null) {
+            return null;
+        }
+        return leer(raiz.resolve(ARCHIVO)).oleada;
+    }
+
+    /**
      * Orden de los servicios del plan: solo se lee del {@code junit-gen.yml} de la raíz (sin caché);
      * {@link ConfigProyecto.OrdenServicios#ALFABETICO} si {@code raiz} es null o no está configurado.
      */
@@ -180,10 +202,29 @@ public final class CargadorConfig {
                     c.avisos.add(archivo + ": 'arreglos' debe ser alFinal o inmediato; se usa alFinal.");
                 }
             }
+            Object vs = m.get("verificadores");
+            if (vs != null) {
+                if (vs instanceof Number n && n.doubleValue() == Math.floor(n.doubleValue()) && n.doubleValue() >= 1
+                        && n.doubleValue() <= 8) {
+                    c.verificadores = n.intValue();
+                } else {
+                    c.avisos.add(archivo + ": 'verificadores' debe ser un entero entre 1 y 8; se usa el valor automático.");
+                }
+            }
+            Object ol = m.get("oleada");
+            if (ol != null) {
+                if (ol instanceof Number n && n.doubleValue() == Math.floor(n.doubleValue())
+                        && n.doubleValue() >= ConfigProyecto.MIN_OLEADA && n.doubleValue() <= ConfigProyecto.MAX_OLEADA) {
+                    c.oleada = n.intValue();
+                } else {
+                    c.avisos.add(archivo + ": 'oleada' debe ser un entero entre " + ConfigProyecto.MIN_OLEADA + " y "
+                            + ConfigProyecto.MAX_OLEADA + "; se usa el valor automático.");
+                }
+            }
             for (Object k : m.keySet()) {
                 String clave = String.valueOf(k);
                 if (!List.of("incluir", "excluir", "aserciones", "jdk", "maven", "classpath", "umbralPuntuacion",
-                        "porcentajeFunciones", "verificacion", "orden", "fallosAsercion", "arreglos")
+                        "porcentajeFunciones", "verificacion", "orden", "fallosAsercion", "arreglos", "verificadores", "oleada")
                         .contains(clave)) {
                     c.avisos.add(archivo + ": clave desconocida '" + clave + "' (se ignora).");
                 }

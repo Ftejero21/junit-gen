@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.junitgen.util.LimitesRespuesta;
 import com.junitgen.util.Textos;
 import com.junitgen.verificacion.ClasificadorFallos;
+import com.junitgen.verificacion.ParalelismoVerificacion;
 import com.junitgen.verificacion.ResultadoTest;
 import com.junitgen.verificacion.ResultadoVerificacion;
 import com.junitgen.verificacion.VerificadorTests;
@@ -20,17 +21,21 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Verificaciones en segundo plano de la sesión MCP: un único hilo daemon ({@code junit-gen-verificador}) prueba
- * servicio a servicio los tests recién generados mientras la IA sigue con el siguiente. El estado por carpeta de
- * salida (cola, servicio en curso, últimos resultados, casos de montaje a corregir, avisos y alertas) está protegido
- * por un monitor propio con {@code wait/notifyAll}. El hilo verificador nunca pregunta al usuario, no mide la
- * llamada en curso ni envía mensajes al cliente: solo deja resultados que las herramientas leen.
+ * Verificaciones en segundo plano de la sesión MCP: hilos daemon ({@code junit-gen-verificador-N}) prueban servicio a
+ * servicio los tests recién generados mientras la IA sigue con el siguiente. Por carpeta de salida pueden ir varios a la
+ * vez (hasta {@link ParalelismoVerificacion#efectivo}; con 1, uno solo y en orden); el límite se aplica en
+ * {@link #procesar} para poder bajar a 1 en caliente si se detecta un choque de recursos, y un mismo servicio nunca está
+ * en curso dos veces. El estado por carpeta de salida (cola, servicios en curso, últimos resultados, casos de montaje a
+ * corregir, avisos y alertas) está protegido por un monitor propio con {@code wait/notifyAll}. Los hilos verificadores
+ * nunca preguntan al usuario, no miden la llamada en curso ni envían mensajes al cliente: solo dejan resultados que las
+ * herramientas leen.
  */
 final class VerificacionesSesion {
 
@@ -87,7 +92,12 @@ final class VerificacionesSesion {
         final Path salida;
         final LinkedHashSet<String> cola = new LinkedHashSet<>();
         final Map<String, Path> proyectos = new HashMap<>();
-        String enCurso;
+        /** Servicios en verificación ahora mismo. */
+        final Set<String> enCurso = new LinkedHashSet<>();
+        /** Verificaciones simultáneas permitidas (se fija al encolar, fuera del monitor). */
+        int limite = 1;
+        /** Máximo de verificaciones simultáneas observado. */
+        int maxSimultaneas;
         final Map<String, Integer> reintentos = new HashMap<>();
         /** Servicios cuya última verificación terminó (con resultado o con error) desde su última generación. */
         final Set<String> intentados = new LinkedHashSet<>();
@@ -116,7 +126,7 @@ final class VerificacionesSesion {
         }
 
         boolean inactiva() {
-            return cola.isEmpty() && enCurso == null;
+            return cola.isEmpty() && enCurso.isEmpty();
         }
 
         /** Sin ámbito (null), como {@link #inactiva()}; con ámbito, ningún servicio del ámbito está en cola ni en curso. */
@@ -129,19 +139,33 @@ final class VerificacionesSesion {
                     return false;
                 }
             }
-            return enCurso == null || !ambito.contains(enCurso);
+            for (String fqn : enCurso) {
+                if (ambito.contains(fqn)) {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 
     private final SesionMcp sesion;
     private final Object monitor = new Object();
     private final Map<String, EstadoVerificaciones> estados = new LinkedHashMap<>();
-    private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "junit-gen-verificador");
-        t.setDaemon(true);
-        return t;
-    });
+    private final AtomicInteger numeroHilo = new AtomicInteger();
+    /** Hilos daemon que se crean bajo demanda (hasta el máximo de verificadores) y mueren tras 30 s sin trabajo. */
+    private final ThreadPoolExecutor executor = crearEjecutor(numeroHilo);
     private volatile boolean cerrado;
+
+    private static ThreadPoolExecutor crearEjecutor(AtomicInteger numero) {
+        ThreadPoolExecutor ex = new ThreadPoolExecutor(ParalelismoVerificacion.MAX, ParalelismoVerificacion.MAX, 30, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(), r -> {
+                    Thread t = new Thread(r, "junit-gen-verificador-" + numero.incrementAndGet());
+                    t.setDaemon(true);
+                    return t;
+                });
+        ex.allowCoreThreadTimeOut(true);
+        return ex;
+    }
 
     VerificacionesSesion(SesionMcp sesion) {
         this.sesion = sesion;
@@ -175,15 +199,18 @@ final class VerificacionesSesion {
             return;
         }
         boolean alFinal = GuiaTanda.arreglosAlFinal(sesion, proyecto);
+        // Lee junit-gen.yml: fuera del monitor.
+        int limite = ParalelismoVerificacion.efectivo(proyecto, salida);
         String k = clave(salida);
         synchronized (monitor) {
             EstadoVerificaciones e = estados.computeIfAbsent(k, x -> new EstadoVerificaciones(salida));
             e.alFinal = alFinal;
+            e.limite = limite;
             for (String fqn : fqns) {
                 if (fqn == null || fqn.isBlank()) {
                     continue;
                 }
-                if (!forzar && (e.cola.contains(fqn) || fqn.equals(e.enCurso) || e.intentados.contains(fqn))) {
+                if (!forzar && (e.cola.contains(fqn) || e.enCurso.contains(fqn) || e.intentados.contains(fqn))) {
                     continue;
                 }
                 e.intentados.remove(fqn);
@@ -207,10 +234,12 @@ final class VerificacionesSesion {
             return;
         }
         boolean alFinal = GuiaTanda.arreglosAlFinal(sesion, proyecto);
+        int limite = ParalelismoVerificacion.efectivo(proyecto, salida);
         String k = clave(salida);
         synchronized (monitor) {
             EstadoVerificaciones e = estados.computeIfAbsent(k, x -> new EstadoVerificaciones(salida));
             e.alFinal = alFinal;
+            e.limite = limite;
             if (ids != null) {
                 Set<String> c = e.contar.computeIfAbsent(fqn, x -> new LinkedHashSet<>());
                 for (String id : ids) {
@@ -254,7 +283,20 @@ final class VerificacionesSesion {
         }
     }
 
-    /** Trabajo del hilo verificador: prueba el primer servicio de la cola y deja su resultado. */
+    /** Lanza tantos trabajos como huecos libres hay (con el monitor tomado), sin pasar de los servicios en cola. */
+    private void enviarHuecos(String k, EstadoVerificaciones e) {
+        int limite = ParalelismoVerificacion.huboChoque(e.salida) ? 1 : Math.max(1, e.limite);
+        int n = Math.min(e.cola.size(), Math.max(1, limite - e.enCurso.size()));
+        for (int i = 0; i < n; i++) {
+            enviar(k);
+        }
+    }
+
+    /**
+     * Trabajo de un hilo verificador: prueba el primer servicio de la cola que no esté ya en curso y deja su resultado.
+     * Si la salida ya tiene tantas verificaciones en curso como su límite, no hace nada (otro trabajo se lanzará al
+     * terminar una).
+     */
     private void procesar(String k) {
         EstadoVerificaciones e;
         String fqn;
@@ -266,10 +308,26 @@ final class VerificacionesSesion {
             if (e == null || e.cola.isEmpty()) {
                 return;
             }
+            int limite = ParalelismoVerificacion.huboChoque(e.salida) ? 1 : Math.max(1, e.limite);
+            if (e.enCurso.size() >= limite) {
+                return;
+            }
+            String elegido = null;
             Iterator<String> it = e.cola.iterator();
-            fqn = it.next();
-            it.remove();
-            e.enCurso = fqn;
+            while (it.hasNext()) {
+                String candidato = it.next();
+                if (!e.enCurso.contains(candidato)) {
+                    elegido = candidato;
+                    it.remove();
+                    break;
+                }
+            }
+            if (elegido == null) {
+                return;
+            }
+            fqn = elegido;
+            e.enCurso.add(fqn);
+            e.maxSimultaneas = Math.max(e.maxSimultaneas, e.enCurso.size());
             proyecto = e.proyectos.get(fqn);
             alFinal = e.alFinal;
             contar = alFinal ? new LinkedHashSet<>(e.contar.getOrDefault(fqn, Set.of())) : null;
@@ -411,8 +469,9 @@ final class VerificacionesSesion {
             }
         } finally {
             synchronized (monitor) {
-                if (fqn.equals(e.enCurso)) {
-                    e.enCurso = null;
+                e.enCurso.remove(fqn);
+                if (!cerrado && !e.cola.isEmpty()) {
+                    enviarHuecos(k, e);
                 }
                 monitor.notifyAll();
             }
@@ -447,7 +506,15 @@ final class VerificacionesSesion {
     boolean ocupado(Path salida, String fqn) {
         synchronized (monitor) {
             EstadoVerificaciones e = estado(salida);
-            return e != null && fqn != null && (e.cola.contains(fqn) || fqn.equals(e.enCurso));
+            return e != null && fqn != null && (e.cola.contains(fqn) || e.enCurso.contains(fqn));
+        }
+    }
+
+    /** Máximo de verificaciones simultáneas observado en la salida (0 si no hubo ninguna). */
+    int maxSimultaneas(Path salida) {
+        synchronized (monitor) {
+            EstadoVerificaciones e = estado(salida);
+            return e == null ? 0 : e.maxSimultaneas;
         }
     }
 
@@ -456,12 +523,13 @@ final class VerificacionesSesion {
      * curso al menos cada {@link #SONDEO_MS} ms. Devuelve true si quedó inactiva.
      */
     boolean esperarInactiva(Path salida, Duration max) {
-        long limite = System.nanoTime() + Math.max(0, max == null ? 0 : max.toNanos());
+        long inicio = System.nanoTime();
+        long limite = inicio + Math.max(0, max == null ? 0 : max.toNanos());
         // El ámbito se calcula antes de tomar el monitor (toma el monitor de la tanda).
         Set<String> ambito = sesion.ambitoLlamada();
         // Mientras espera, la llamada suelta el cerrojo de sesión para que otros bloques sigan; nunca se readquiere con
         // el monitor tomado (el cerrojo se recupera al salir del bloque sincronizado).
-        return sesion.sinCerrojo(() -> {
+        boolean inactiva = sesion.sinCerrojo(() -> {
             synchronized (monitor) {
                 while (true) {
                     EstadoVerificaciones e = estado(salida);
@@ -481,6 +549,13 @@ final class VerificacionesSesion {
                 }
             }
         });
+        // Fuera del monitor y con el cerrojo de sesión recuperado: mide lo que el bloque esperó a sus pruebas.
+        Integer bloque = sesion.bloqueLlamada();
+        if (bloque != null) {
+            long ms = TimeUnit.NANOSECONDS.toMillis(Math.max(0, System.nanoTime() - inicio));
+            BloquesTanda.sumarEspera(sesion, sesion.fachada().ultimaRuta(), bloque, ms, true);
+        }
+        return inactiva;
     }
 
     /** Progreso: servicios con casos en la sesión, verificados (todos sus casos con estado), en curso y en cola. */
@@ -496,7 +571,17 @@ final class VerificacionesSesion {
         int verificados = (int) completos.values().stream().filter(Boolean::booleanValue).count();
         synchronized (monitor) {
             EstadoVerificaciones e = estado(salida);
-            String enCurso = e == null || e.enCurso == null ? null : Textos.nombreSimple(e.enCurso);
+            String enCurso = null;
+            if (e != null && !e.enCurso.isEmpty()) {
+                List<String> nombres = new ArrayList<>();
+                for (String fqn : e.enCurso) {
+                    if (nombres.size() >= MAX_IDS_NOTA) {
+                        break;
+                    }
+                    nombres.add(Textos.nombreSimple(fqn));
+                }
+                enCurso = String.join(", ", nombres) + (e.enCurso.size() > nombres.size() ? " +" + (e.enCurso.size() - nombres.size()) : "");
+            }
             int enCola = e == null ? 0 : e.cola.size();
             return new Progreso(verificados, enCurso, enCola, completos.size());
         }

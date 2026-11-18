@@ -64,6 +64,14 @@ public class Tanda {
     public boolean medicionInformada;
     /** Bloques de trabajo en paralelo (clientes con subagentes: Claude Code y GitHub Copilot); null = tanda secuencial. */
     public List<BloqueTanda> bloques;
+    /** Verificaciones de servicio simultáneas configuradas al repartir los bloques (null = tanda antigua). */
+    public Integer verificadores;
+    /** Máximo de verificaciones simultáneas observado en la tanda (null si no se midió). */
+    public Integer maxVerificacionesSimultaneas;
+    /** Número (desde 1) de la oleada del modo «todos» a la que pertenece la tanda; null = tanda normal. */
+    public Integer oleada;
+    /** Total de oleadas de la campaña del modo «todos»; null = tanda normal. */
+    public Integer oleadas;
 
     /** Estados de un bloque de trabajo en paralelo. */
     public static final String BLOQUE_PENDIENTE = "pendiente";
@@ -82,6 +90,10 @@ public class Tanda {
         public String tomado;
         /** Instante (ISO-8601) en que el bloque quedó terminado. */
         public String terminado;
+        /** Milisegundos que las llamadas del bloque esperaron a que terminaran las pruebas en segundo plano. */
+        public Long esperaPruebasMs;
+        /** Milisegundos que las llamadas del bloque esperaron el turno del cerrojo de sesión. */
+        public Long esperaTurnoMs;
     }
 
     /** Tiempo y llamadas atribuidos a un servicio de la tanda. */

@@ -83,12 +83,25 @@ public class HerramientaBloque implements Herramienta {
             return new Resultado(Json.compacto(BloquesTanda.nodoTerminado(sesion, proyecto, salida, id, null)), false);
         }
         BloquesTanda.marcar(sesion, proyecto, id, Tanda.BLOQUE_EN_CURSO);
+        // Cola de trabajo: si el bloque no tiene nada por generar, toma el siguiente servicio pendiente; se vuelve a leer.
+        BloquesTanda.reclamar(sesion, proyecto, id);
+        Tanda.BloqueTanda actualizado = BloquesTanda.de(t, id);
+        if (actualizado != null) {
+            bloque = actualizado;
+        }
+        if (Tanda.BLOQUE_TERMINADO.equals(bloque.estado)) {
+            return new Resultado(Json.compacto(BloquesTanda.nodoTerminado(sesion, proyecto, salida, id, null)), false);
+        }
         String actual = HerramientaGenerar.siguienteServicio(sesion, proyecto);
         ObjectNode r = Json.objeto();
         ObjectNode b = r.putObject("bloque");
         b.put("id", id);
         ArrayNode servicios = b.putArray("servicios");
         bloque.servicios.forEach(fqn -> servicios.add(Textos.nombreSimple(fqn)));
+        int enCola = BloquesTanda.enCola(sesion, proyecto);
+        if (enCola > 0) {
+            b.put("enCola", enCola);
+        }
         if (actual == null) {
             b.put("generado", true);
         } else {

@@ -1,5 +1,6 @@
 package com.junitgen.mcp;
 
+import com.junitgen.generacion.Oleadas;
 import com.junitgen.generacion.RutasSalida;
 
 import java.nio.file.Path;
@@ -13,6 +14,8 @@ import java.util.List;
 final class RespuestaFinal {
 
     static final int MAX_SERVICIOS = 15;
+    /** Filas de la tabla por oleada de la respuesta global del modo «todos» (el resto va al informe). */
+    static final int MAX_FILAS_OLEADAS = 40;
 
     /** Cifras de la sesión necesarias para la respuesta final. */
     record Cifras(int casosGenerados, int ejecutados, int pasan, int fallosAsercion, int erroresMontaje, int noCompilan,
@@ -126,6 +129,85 @@ final class RespuestaFinal {
                     .append(salida).append("`; copiarlos a `src/test/java` del proyecto es un paso manual.");
         }
         return sb.toString();
+    }
+
+    /**
+     * Respuesta final global del modo «todos»: primera línea con los totales, tabla de totales, tabla por oleada (máx.
+     * {@link #MAX_FILAS_OLEADAS} filas) y el pie de {@link #armar} (enlace al informe y copia manual).
+     */
+    static String armarTodos(Oleadas c, Path salida) {
+        int casos = 0;
+        int pasan = 0;
+        int fallos = 0;
+        int montaje = 0;
+        int sinVerificar = 0;
+        int duplicados = 0;
+        int arreglados = 0;
+        int bugs = 0;
+        int apartados = 0;
+        synchronized (c) {
+            for (Oleadas.ResumenOleada o : c.oleadas) {
+                casos += o.casosGenerados;
+                pasan += o.pasan;
+                fallos += o.fallosAsercion;
+                montaje += o.montajeFallido;
+                sinVerificar += o.sinVerificar;
+                duplicados += o.duplicados;
+                arreglados += o.arreglados;
+                bugs += o.posiblesBugs;
+                apartados += o.apartados;
+            }
+            int hechos = 0;
+            int omitidos = 0;
+            int incompletos = 0;
+            for (Oleadas.ServicioOleada s : c.servicios) {
+                if (Oleadas.SERVICIO_HECHO.equals(s.estado)) {
+                    hechos++;
+                    if (Boolean.TRUE.equals(s.incompleto)) {
+                        incompletos++;
+                    }
+                } else if (Oleadas.SERVICIO_OMITIDO.equals(s.estado)) {
+                    omitidos++;
+                }
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append("Se generaron y ejecutaron los tests de ").append(hechos).append(hechos == 1 ? " servicio en " : " servicios en ")
+                    .append(c.oleadas.size()).append(c.oleadas.size() == 1 ? " oleada." : " oleadas.");
+            sb.append("\n\n| Resultado | Cifra |\n|---|---|\n");
+            fila(sb, "Casos generados", String.valueOf(casos));
+            fila(sb, "Pasan", String.valueOf(pasan));
+            fila(sb, "Fallos de aserción", String.valueOf(fallos));
+            fila(sb, "Apartados por error de montaje", String.valueOf(montaje));
+            fila(sb, "Sin verificar", String.valueOf(sinVerificar));
+            fila(sb, "Descartados por duplicado", String.valueOf(duplicados));
+            fila(sb, "Arreglados al final", String.valueOf(arreglados));
+            fila(sb, "Posibles bugs", String.valueOf(bugs));
+            fila(sb, "Apartados (no se pudieron arreglar)", String.valueOf(apartados));
+            fila(sb, "Servicios hechos", String.valueOf(hechos));
+            fila(sb, "Servicios omitidos", String.valueOf(omitidos));
+            fila(sb, "Servicios incompletos", String.valueOf(incompletos));
+            sb.append("\n| Oleada | Servicios | Casos | Pasan | No pasan | Tiempo |\n|---|---|---|---|---|---|\n");
+            int filas = 0;
+            for (Oleadas.ResumenOleada o : c.oleadas) {
+                if (filas++ >= MAX_FILAS_OLEADAS) {
+                    break;
+                }
+                sb.append("| ").append(o.numero).append(" | ").append(o.servicios).append(" | ").append(o.casosGenerados).append(" | ")
+                        .append(o.pasan).append(" | ").append(o.fallosAsercion + o.montajeFallido).append(" | ")
+                        .append(OleadasTodos.tiempo(o.ms)).append(" |\n");
+            }
+            if (c.oleadas.size() > MAX_FILAS_OLEADAS) {
+                sb.append("\n… y ").append(c.oleadas.size() - MAX_FILAS_OLEADAS).append(" más (informe.md).\n");
+            }
+            sb.append('\n');
+            if (salida == null) {
+                sb.append("No hay carpeta de salida en esta sesión.");
+            } else {
+                sb.append("Informe: [informe.md](").append(salida.resolve(RutasSalida.INFORME).toUri()).append("). Los tests están en `")
+                        .append(salida).append("`; copiarlos a `src/test/java` del proyecto es un paso manual.");
+            }
+            return sb.toString();
+        }
     }
 
     /** «`Servicio` (detalle)» de cada pendiente; null → vacío. */
