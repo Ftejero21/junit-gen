@@ -81,7 +81,7 @@ public class HerramientaEscanear implements Herramienta {
                 + "'peticion' (junit-gen deduce numServicios, servicios, todas, funciones o continuar) y en 'ruta' la raíz del "
                 + "workspace que ya conoces, nunca un módulo. Un número N del usuario es siempre numServicios. Sin 'carpetaSalida' "
                 + "usa la ruta por defecto o la pregunta una vez. 'continuar'=true si el usuario escribe `continuar` o perdiste el "
-                + "hilo de la tanda. 'paralelo'=true solo en Claude Code con subagentes (Agent), nunca en Copilot: reparte el plan "
+                + "hilo de la tanda. 'paralelo'=true si tienes subagentes (Agent en Claude Code; task o runSubagent en Copilot): reparte el plan "
                 + "en bloques y devuelve el promptTrabajador. Cada caso nuevo: queHaceOriginal una vez por función y queComprueba "
                 + "en cada caso. Sigue accionRequerida. Secciones largas: 'seccion'+'pagina', solo si las piden.";
     }
@@ -111,7 +111,7 @@ public class HerramientaEscanear implements Herramienta {
         Herramienta.propiedad(s, "tamPagina", "integer", "Filas por página en seccion=servicios (por defecto 40, máx. 100).", false);
         Herramienta.propiedad(s, "refrescar", "boolean", "Ignora la caché y vuelve a escanear.", false);
         Herramienta.propiedad(s, "continuar", "boolean", "Retoma la tanda guardada: el usuario escribió `continuar` o perdiste el hilo.", false);
-        Herramienta.propiedad(s, "paralelo", "boolean", "Solo Claude Code con subagentes (Agent), nunca Copilot: reparte el plan en bloques.", false);
+        Herramienta.propiedad(s, "paralelo", "boolean", "Si tienes subagentes (Agent, task o runSubagent): reparte el plan en bloques.", false);
         return s;
     }
 

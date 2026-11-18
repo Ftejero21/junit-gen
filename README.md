@@ -232,7 +232,12 @@ El comando completo es `/junit-gen:generartest`; el corto `/generartest` funcion
 4. Escribe `/generartest genérame los tests de 5 servicios`. La primera vez te pregunta la carpeta de salida (p. ej. `C:\Proyectos\MiProyectoTest`) y la recuerda.
 5. Revisa los tests y el `informe.md` de esa carpeta y copia a `src/test/java` los que quieras.
 
-> **💡 ¿Por qué es preferible Claude Code?** Copilot no tiene subagentes, así que junit-gen trabaja allí en **modo secuencial**: una sola conversación hace todos los servicios uno detrás de otro y va creciendo con cada uno. Funciona y conserva todas las garantías, pero es más lento y gasta más cuantos más servicios pidas. En **Claude Code** junit-gen reparte los servicios entre **subagentes que trabajan en paralelo**, cada uno con el contexto limpio: de ahí salen las mejoras de la tabla (hasta 3,8× más rápido). En Copilot, para tandas grandes, pide los servicios por tramos o retoma con `/generartest continuar` en un chat nuevo.
+> **💡 Copilot también trabaja en paralelo, pero Claude Code sigue siendo la mejor opción.** En los planes de pago de Copilot, junit-gen reparte los servicios entre **subagentes** (herramienta `task`) igual que en Claude Code: en una prueba con 5 servicios pasó de 6 min 56 s a 4 min 08 s. Aun así, recomendamos Claude Code porque:
+> - **Más seguro:** el plugin **impide al agente editar archivos o ejecutar comandos** mientras dura la tanda; en Copilot depende de que el modelo respete las instrucciones.
+> - **Respuestas más completas:** Copilot corta las respuestas largas de las herramientas, así que junit-gen le envía el código en trozos más pequeños y hace falta alguna llamada más.
+> - **Medido a fondo:** todas las cifras de la tabla son de Claude Code.
+>
+> Si tu Copilot no tiene subagentes (plan gratuito), junit-gen trabaja en **modo secuencial**: funciona igual, pero es más lento con muchos servicios; pide los servicios por tramos o retoma con `/generartest continuar` en un chat nuevo.
 
 ### Desde el código
 

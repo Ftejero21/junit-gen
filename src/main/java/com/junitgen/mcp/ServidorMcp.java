@@ -63,7 +63,7 @@ public class ServidorMcp {
                 + "usuario tal cual y en `ruta` la raíz del workspace (nunca un módulo); su «Siguiente paso» indica el resto "
                 + "(seleccionar_funciones, spec, generar_tests, ejecutar_tests, arreglar_caso). En cada caso del spec: "
                 + "queHaceOriginal una vez por función y queComprueba en cada caso; junit-gen completa el resto. Modo paralelo "
-                + "(solo Claude Code con subagentes; si no los tienes, ignóralo): si el escaneo devuelve bloques, lanza un "
+                + "(Agent en Claude Code; task o runSubagent en Copilot): si el escaneo devuelve bloques, lanza un "
                 + "subagente por bloque con el promptTrabajador y, al volver todos, llama a ejecutar_tests {} hasta "
                 + "respuestaFinal. No arregles nada durante la tanda: los fallos se arreglan al final. No rebajes los tests ni "
                 + "pongas como esperado el valor obtenido sin justificarlo con el código. Nunca preguntes al usuario qué hacer con "

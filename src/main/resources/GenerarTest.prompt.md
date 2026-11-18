@@ -52,7 +52,7 @@ Si pierdes el hilo de la tanda en curso (contexto resumido o compactado), llama 
 - Poner como esperado el valor obtenido sin justificarlo con el código del servicio.
 - Preguntar al usuario si quiere probar los tests o pasar `decisionVerificacion` por tu cuenta: junit-gen los prueba siempre (`verificacion.decision` = `probar`).
 - Decir que "no se generaron tests" (o repetir `generar_tests` con el mismo spec) si `generar_tests` devolvió casos o `resumenSesion.casosGenerados` > 0, aunque una llamada terminara con error de tiempo (`MCP error -32001`): llama a `ejecutar_tests` sin argumentos o muestra `respuestaFinal`. Si es `ejecutar_tests` la que termina con error de tiempo, llama una vez a `ejecutar_tests {paginaResultados: 1}` (devuelve los resultados de esa ejecución sin repetirla); solo si responde que no hay ninguna ejecución, repite `ejecutar_tests` sin argumentos una vez.
-- No pases `paralelo` a `escanear_proyecto` (modo paralelo de Claude Code con subagentes: aquí no existe).
+- Modo paralelo: si junit-gen reparte el plan en bloques (tabla «Bloque | Servicios» y `promptTrabajador`) y tienes la herramienta de subagentes (`task` o `runSubagent`), lanza en UN solo mensaje un subagente por bloque con el `promptTrabajador` exacto (cambiando `<K>`), espera a que vuelvan y llama a `ejecutar_tests {}` hasta `respuestaFinal`. Si no tienes subagentes, haz tú cada bloque con `tomar_bloque {bloque: K, instrucciones: true}`.
 
 ## Reglas obligatorias (léelas antes de empezar)
 

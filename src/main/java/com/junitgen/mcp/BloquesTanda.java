@@ -27,7 +27,7 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Modo paralelo de la tanda (solo Claude Code con subagentes): reparte el plan en bloques de servicios persistidos en
+ * Modo paralelo de la tanda (clientes con subagentes: Claude Code y GitHub Copilot): reparte el plan en bloques de servicios persistidos en
  * {@link Tanda#bloques} (tanda.json) y ofrece las consultas, el ámbito de bloque de cada llamada, el paquete de trabajo con
  * la selección de funciones incluida y los textos de la guía. Todo acceso a {@code t.bloques} va bajo {@code synchronized (t)}.
  * Sin bloques en la tanda, nada de esto interviene.
@@ -106,8 +106,8 @@ final class BloquesTanda {
 
     /**
      * null si el modo paralelo se puede aplicar; si no, el motivo (para una nota). Requiere carpeta de salida conocida,
-     * {@code verificacion: siempre}, {@code fallosAsercion: revisarIa}, {@code arreglos: alFinal} y un cliente que no sea
-     * GitHub Copilot ni Visual Studio Code.
+     * {@code verificacion: siempre}, {@code fallosAsercion: revisarIa} y {@code arreglos: alFinal}. {@code JUNITGEN_PARALELO=0}
+     * lo desactiva.
      */
     static String motivoNoPermitido(SesionMcp sesion, Path proyecto, Path salida) {
         if (salida == null) {
@@ -122,19 +122,20 @@ final class BloquesTanda {
         if (CargadorConfig.modoArreglos(proyecto) != ConfigProyecto.ModoArreglos.AL_FINAL) {
             return "Modo paralelo sin aplicar: requiere `arreglos: alFinal` en junit-gen.yml (se sigue en secuencial).";
         }
-        String cliente = sesion.cliente();
-        if (cliente != null) {
-            String c = cliente.toLowerCase(Locale.ROOT);
-            if (c.contains("copilot") || c.contains("visual studio code") || c.contains("vscode")) {
-                return "Modo paralelo sin aplicar: el cliente (" + cliente + ") no tiene subagentes (se sigue en secuencial).";
-            }
+        String forzado = System.getenv("JUNITGEN_PARALELO");
+        if (forzado != null && ("0".equals(forzado.strip()) || "false".equalsIgnoreCase(forzado.strip()))) {
+            return "Modo paralelo sin aplicar: desactivado con JUNITGEN_PARALELO=0 (se sigue en secuencial).";
         }
         return null;
     }
 
+    /** Clientes MCP con subagentes conocidos: Claude Code (herramienta Agent) y GitHub Copilot / VS Code (task o runSubagent). */
+    private static final List<String> CLIENTES_CON_SUBAGENTES = List.of("claude", "copilot", "visual studio code", "vscode");
+
     /**
-     * Paralelo por defecto (sin argumento {@code paralelo}): solo si el cliente MCP declara ser Claude Code, que tiene
-     * subagentes. {@code JUNITGEN_PARALELO=0|1} lo fuerza. Así no depende de que el modelo recuerde pasar el argumento.
+     * Paralelo por defecto (sin argumento {@code paralelo}): si el cliente MCP declara ser Claude Code o GitHub Copilot /
+     * VS Code, que tienen subagentes. {@code JUNITGEN_PARALELO=0|1} lo fuerza. Así no depende de que el modelo recuerde
+     * pasar el argumento. Si el cliente no pudiera lanzarlos, el agente principal hace los bloques con tomar_bloque.
      */
     static boolean clienteConSubagentes(SesionMcp sesion) {
         String forzado = System.getenv("JUNITGEN_PARALELO");
@@ -142,7 +143,11 @@ final class BloquesTanda {
             return "1".equals(forzado.strip()) || "true".equalsIgnoreCase(forzado.strip());
         }
         String cliente = sesion.cliente();
-        return cliente != null && cliente.toLowerCase(Locale.ROOT).contains("claude");
+        if (cliente == null) {
+            return false;
+        }
+        String c = cliente.toLowerCase(Locale.ROOT);
+        return CLIENTES_CON_SUBAGENTES.stream().anyMatch(c::contains);
     }
 
     static boolean permitido(SesionMcp sesion, Path proyecto, Path salida) {
@@ -579,7 +584,8 @@ final class BloquesTanda {
         sb.append("Modo paralelo: el plan se reparte en ").append(total).append(" bloques (guardados en tanda.json); ")
                 .append(elegidos.size() == total ? "" : "faltan por terminar " + elegidos.size() + ". ")
                 .append("Tú NO generes ningún servicio. En UN solo mensaje lanza un subagente por cada bloque de la tabla con la "
-                        + "herramienta Agent (subagent_type: general-purpose, sin `model`, sin segundo plano), cada uno con el "
+                        + "herramienta de subagentes (Agent con subagent_type: general-purpose en Claude Code; task o runSubagent en "
+                        + "GitHub Copilot; sin `model`, sin segundo plano), cada uno con el "
                         + "promptTrabajador de abajo cambiando <K> por el número de su bloque; espera a que vuelvan todos y no "
                         + "resumas lo que devuelven. Después llama a ejecutar_tests {} (repítela mientras devuelva verificando=true) y "
                         + "sigue accionRequerida hasta recibir respuestaFinal. Si un subagente falla o devuelve SIN_SESION_COMPARTIDA, "

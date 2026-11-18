@@ -352,8 +352,8 @@ final class GuiaTanda {
             texto = "esta llamada ha sido rechazada: haz lo que indica el mensaje de abajo (corrige y repítela, o da antes el paso "
                     + "que pide).";
         } else if (!sinGenerar.isEmpty()) {
-            texto = "lanza AHORA, en un solo mensaje y todos a la vez, un subagente (herramienta Agent, general-purpose) por cada "
-                    + "bloque con promptTrabajador; NO hagas tú los bloques (solo si no tienes la herramienta Agent o un subagente "
+            texto = "lanza AHORA, en un solo mensaje y todos a la vez, un subagente (Agent en Claude Code; task o runSubagent en "
+                    + "Copilot) por cada bloque con promptTrabajador; NO hagas tú los bloques (solo si no tienes subagentes o uno "
                     + "falla: tomar_bloque {bloque: id}); cuando vuelvan, ejecutar_tests {}.";
         } else {
             texto = textoPaso(paso, sesion, proyecto, salida, herramienta, args, MAX_REQUERIDOS, haySiguiente, hayPaquete);

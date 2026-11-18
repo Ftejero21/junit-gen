@@ -62,7 +62,7 @@ public class Tanda {
     public Map<String, Medicion> mediciones = new LinkedHashMap<>();
     /** true si la sección «Medición de la tanda» ya está escrita en informe.md. */
     public boolean medicionInformada;
-    /** Bloques de trabajo en paralelo (solo Claude Code con subagentes); null = tanda secuencial. */
+    /** Bloques de trabajo en paralelo (clientes con subagentes: Claude Code y GitHub Copilot); null = tanda secuencial. */
     public List<BloqueTanda> bloques;
 
     /** Estados de un bloque de trabajo en paralelo. */
